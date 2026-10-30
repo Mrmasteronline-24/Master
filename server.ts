@@ -37,18 +37,33 @@ const initialBotConfig: BotConfig = {
   chop_score_band: 1,
   kijun_slope_len: 5,
   default_trade_duration_mins: 60,
+  admin_default_margin: 0.8,
+  admin_default_leverage: 10,
+  admin_default_tp: 30.0,
+  admin_default_sl: 27.0,
+  admin_max_loss_recover: 0.20,
+  signal_start_time: '00:00',
+  signal_end_time: '23:59',
 };
 
 let botConfig: BotConfig = { ...initialBotConfig };
 
-// Whitelist contains only coins that comply with Binance Futures $5 min notional on micro-margins ($0.50 - $1.00 @ 10x)
-// High unit price coins (BTCUSDT, ETHUSDT, TAOUSDT, etc.) require $26-$70+ notional and are excluded to prevent order rejection!
-const defaultCoinsList = [
+// 50 Pre-verified Binance Futures Altcoins suitable for micro-margin ($0.80-$1.00 at 10x) with $5.00 min notional
+const default50CoinsList = [
   'DOGEUSDT', 'XRPUSDT', 'SUIUSDT', 'NEARUSDT', 'ADAUSDT',
   'PEPEUSDT', '1000BONKUSDT', 'FETUSDT', 'RENDERUSDT', 'ENAUSDT',
   'AVAXUSDT', 'LINKUSDT', 'FILUSDT', 'LTCUSDT', 'UNIUSDT',
-  'BICOUSDT', 'WLDUSDT', 'C98USDT', 'HFTUSDT', 'APTUSDT'
+  'BICOUSDT', 'WLDUSDT', 'C98USDT', 'HFTUSDT', 'APTUSDT',
+  'ARBUSDT', 'OPUSDT', 'SEIUSDT', 'TIAUSDT', 'INJUSDT',
+  'STXUSDT', 'GALAUSDT', 'SANDUSDT', 'MANAUSDT', 'FTMUSDT',
+  'CHZUSDT', 'CRVUSDT', 'DYDXUSDT', 'BLURUSDT', 'JUPUSDT',
+  'PYTHUSDT', 'STRKUSDT', 'MEMEUSDT', '1000SHIBUSDT', '1000FLOKIUSDT',
+  '1000LUNCUSDT', 'KAVAUSDT', 'ALGOUSDT', 'VETUSDT', 'XLMUSDT',
+  'TRXUSDT', 'ICPUSDT', 'DOTUSDT', 'ATOMUSDT', 'THETAUSDT'
 ];
+const defaultCoinsList = default50CoinsList;
+
+// Whitelist contains only coins that comply with Binance Futures $5 min notional on micro-margins ($0.50 - $1.00 @ 10x)
 
 // Binance Futures Min Notional & Lot-Size requirements
 const SYMBOL_NOTIONAL_REQUIREMENTS: Record<string, { minNotional: number; minMargin10x: number; reason?: string }> = {
@@ -194,6 +209,37 @@ function generateFinalPerformanceReport(targetDate?: string): string {
     `${blacklistedStr}\n\n\n` +
     `🏆 Top Performing Coins:\n` +
     `${topCoinsLines}`;
+}
+
+function generateCoinStatsReport(): string {
+  const statsMap = new Map<string, { wins: number; losses: number; pnl: number }>();
+
+  seedTradeStats.forEach((s) => {
+    statsMap.set(s.symbol, { wins: s.wins, losses: s.losses, pnl: s.pnl });
+  });
+
+  tradeHistory.forEach((t) => {
+    const cur = statsMap.get(t.symbol) || { wins: 0, losses: 0, pnl: 0 };
+    if (t.reason === 'TP_HIT' || t.pnl > 0) {
+      cur.wins += 1;
+    } else {
+      cur.losses += 1;
+    }
+    cur.pnl += t.pnl;
+    statsMap.set(t.symbol, cur);
+  });
+
+  const lines: string[] = [];
+  statsMap.forEach((st, sym) => {
+    const total = st.wins + st.losses;
+    const rate = total > 0 ? ((st.wins / total) * 100).toFixed(0) : '0';
+    const sign = st.pnl >= 0 ? '+' : '-';
+    lines.push(`• <b>${sym}</b>: ${st.wins}W / ${st.losses}L (${rate}%) | PnL: ${sign}$${Math.abs(st.pnl).toFixed(2)}`);
+  });
+
+  return `📊 <b>COIN PERFORMANCE & WIN/LOSS STATS</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    (lines.length > 0 ? lines.join('\n') : '<i>කිසිදු trade දත්තයක් මෙතෙක් වාර්තා වී නොමැත.</i>') +
+    `\n\n<i>සෑම trade එකක්ම close වන විට ස්වයංක්‍රීයව යාවත්කාලීන වේ.</i>`;
 }
 
 // Clean state for real Telegram users and live positions
@@ -1133,7 +1179,7 @@ function dispatchTradeToUsers(
     const userPool = u.global_loss_pool;
 
     // Capped Partial Recovery Logic
-    const maxRecoverPerTrade = 0.20; // Max $0.20 per trade to keep TP reachable
+    const maxRecoverPerTrade = botConfig.admin_max_loss_recover || 0.20; // Configurable per trade max loss
     let pendingLossToAdd = 0.0;
     if (userPool > 0) {
       pendingLossToAdd = Math.min(userPool * (rtpPct / 100.0), maxRecoverPerTrade);
@@ -1282,12 +1328,12 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       is_approved: 1,
       is_active: 1,
       is_admin: isTargetAdmin ? 1 : 0,
-      base_margin: 0.8,
-      leverage: 10,
-      margin_sl_pct: 27.0,
-      fast_tp_pct: 30.0,
+      base_margin: botConfig.admin_default_margin || 0.8,
+      leverage: botConfig.admin_default_leverage || 10,
+      margin_sl_pct: botConfig.admin_default_sl || 27.0,
+      fast_tp_pct: botConfig.admin_default_tp || 30.0,
       rtp_pct: 15.0,
-      blacklist_balance_set: 0.10,
+      blacklist_balance_set: botConfig.admin_max_loss_recover || 0.20,
       max_user_trades: 5,
       user_start_hour: 0,
       user_start_minute: 0,
@@ -1455,45 +1501,679 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       }
       break;
 
-    case 'skip':
-      if (tokens.length < 2) {
-        replyText = '⚠️ Usage: <code>/skip &lt;signal_num&gt;</code>';
-      } else {
+    case 'skip': {
+      let pos: UserPosition | undefined;
+      if (tokens.length >= 2) {
         const sig = parseInt(tokens[1], 10);
-        const pos = positions.find((p) => p.chat_id === chatId && p.signal_num === sig && p.is_open === 1);
-        if (pos) {
-          pos.is_open = 0;
-          pos.close_reason = 'SKIPPED_REFUND';
-          if (pos.attached_loss > 0) {
-            user.global_loss_pool += pos.attached_loss;
-          }
-          replyText = `🚫 <b>TRADE #${sig} (${pos.symbol}) SKIPPED & REFUNDED!</b> ↩️\n` +
-            `✅ මෙම ට්‍රේඩ් එක අවලංගු කර slot එක නිදහස් කරන ලදී.` +
-            (pos.attached_loss > 0 ? `\n💸 ඔබගේ Loss Pool එකට <b>$${pos.attached_loss.toFixed(4)}</b> ක මුදල නැවත බැර විය.` : '');
+        pos = isNaN(sig)
+          ? positions.find((p) => (isAdmin || p.chat_id === chatId) && (p.symbol.toUpperCase() === tokens[1].toUpperCase() || p.symbol.toUpperCase() === `${tokens[1].toUpperCase()}USDT`) && p.is_open === 1)
+          : positions.find((p) => (isAdmin || p.chat_id === chatId) && p.signal_num === sig && p.is_open === 1);
+      } else {
+        pos = positions.find((p) => (isAdmin ? true : p.chat_id === chatId) && p.is_open === 1);
+      }
+      if (pos) {
+        pos.is_open = 0;
+        pos.close_reason = 'SKIPPED_REFUND';
+        const targetUser = users.get(pos.chat_id) || user;
+        if (pos.attached_loss > 0) {
+          targetUser.global_loss_pool += pos.attached_loss;
+        }
+        replyText = `🚫 <b>TRADE #${pos.signal_num} (${pos.symbol}) SKIPPED & REFUNDED!</b> ↩️\n` +
+          `✅ මෙම ට්‍රේඩ් එක සාර්ථකව අවලංගු කර slot එක නිදහස් කරන ලදී.` +
+          (pos.attached_loss > 0 ? `\n💸 Loss Pool එකට <b>$${pos.attached_loss.toFixed(4)}</b> ක මුදල නැවත බැර විය.` : '');
+      } else {
+        replyText = `ℹ️ අවලංගු කිරීමට විවෘත ට්‍රේඩ් එකක් හමු නොවීය. Usage: <code>/skip &lt;signal_num&gt;</code>`;
+      }
+      break;
+    }
+
+    case 'retune': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else {
+        botConfig.is_retuned = !botConfig.is_retuned;
+        replyText = `🔄 <b>SIGNAL STRATEGY RETUNED!</b>\n\n` +
+          `වත්මන් Mode: <b>${botConfig.is_retuned ? 'Trend-Following Mode 🚀' : 'Normal (Inverted Mean-Reversion) Mode 🔄'}</b>\n` +
+          `<i>(Normal සහ Trend-Following අතර සාර්ථකව මාරු විය)</i>`;
+      }
+      break;
+    }
+
+    case 'max_trade':
+    case 'max_trades': {
+      if (tokens.length >= 2) {
+        if (!isAdmin) {
+          replyText = '❌ <b>Admin Only!</b>';
         } else {
-          replyText = `ℹ️ Trade #${sig} දැනට ක්‍රියාකාරී නැත.`;
+          const val = parseInt(tokens[1], 10);
+          if (isNaN(val) || val <= 0) {
+            replyText = '❌ වලංගු උපරිම trade සංඛ්‍යාවක් ලබාදෙන්න (උදා: /max_trade 5).';
+          } else {
+            botConfig.max_signals_global = val;
+            user.max_user_trades = val;
+            replyText = `🔢 <b>උපරිම Trade ගණන ${val} ලෙස සාර්ථකව සකසන ලදී!</b>\nGlobal Concurrency Limit: <b>${val}</b>`;
+          }
+        }
+      } else {
+        replyText = `🔢 <b>වත්මන් උපරිම Trade සීමාවන්:</b>\n` +
+          `• Global Limit: <b>${botConfig.max_signals_global} trades</b>\n` +
+          `• Your User Limit: <b>${user.max_user_trades} trades</b>\n\n` +
+          (isAdmin ? `<i>වෙනස් කිරීමට: /max_trade &lt;ගණන&gt;</i>` : '');
+      }
+      break;
+    }
+
+    case 'auto_scan': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else {
+        default50CoinsList.forEach((c) => {
+          whitelist.add(c);
+          blacklist.delete(c);
+          coinLossCounts.delete(c);
+        });
+        replyText = `🔍 <b>BINANCE SMART SCANNER COMPLETED!</b>\n\n` +
+          `Binance Futures පීරා $0.80 Margin එකට ගැලපෙන හොඳම Altcoins ${default50CoinsList.length} ක් ස්වයංක්‍රීයව Whitelist කරන ලදී! ✅\n\n` +
+          `📊 <b>Whitelist Counts:</b> ${whitelist.size} Active Coins`;
+      }
+      break;
+    }
+
+    case 'sync_coins': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else {
+        syncWhitelist5mKlines();
+        replyText = `🔄 <b>BINANCE FUTURES COINS SYNCED!</b>\n\n` +
+          `Binance Futures සක්‍රීය කාසි Private API එකෙන් කියවා යාවත්කාලීන කරන ලදී.\n` +
+          `🪙 Whitelisted: <b>${whitelist.size}</b> coins\n` +
+          `📡 Live Cache: <b>${marketCache.size}</b> symbols active`;
+      }
+      break;
+    }
+
+    case 'fwl_default': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else {
+        whitelist.clear();
+        default50CoinsList.forEach((c) => whitelist.add(c));
+        replyText = `🪙 <b>DEFAULT 50 WHITELIST RESTORED!</b>\n\n` +
+          `මූලික කාසි 50 ම නැවත Whitelist එකට සාර්ථකව එක් කරන ලදී. ✅\n\n` +
+          `<code>${Array.from(whitelist).slice(0, 15).join(', ')}... (+${whitelist.size - 15} more)</code>`;
+      }
+      break;
+    }
+
+    case 'fwl_add': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = '⚠️ Usage: <code>/fwl_add [COINS]</code> (උදා: /fwl_add SOLUSDT XRPUSDT)';
+      } else {
+        const added: string[] = [];
+        tokens.slice(1).forEach((raw) => {
+          const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+          const sym = clean.endsWith('USDT') ? clean : `${clean}USDT`;
+          if (sym.length >= 5) {
+            whitelist.add(sym);
+            blacklist.delete(sym);
+            added.push(sym);
+          }
+        });
+        replyText = `✅ <b>කාසි Whitelist එකට එක් කරන ලදී (${added.length}):</b>\n\n` +
+          `<code>${added.join(', ')}</code>\n\n` +
+          `මුළු Whitelist කාසි ගණන: <b>${whitelist.size}</b>`;
+      }
+      break;
+    }
+
+    case 'fwl_remove': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = '⚠️ Usage: <code>/fwl_remove [COINS]</code> (උදා: /fwl_remove DOGEUSDT)';
+      } else {
+        const removed: string[] = [];
+        tokens.slice(1).forEach((raw) => {
+          const clean = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+          const sym = clean.endsWith('USDT') ? clean : `${clean}USDT`;
+          if (whitelist.has(sym)) {
+            whitelist.delete(sym);
+            removed.push(sym);
+          }
+        });
+        replyText = `🗑️ <b>කාසි Whitelist එකෙන් ඉවත් කරන ලදී (${removed.length}):</b>\n\n` +
+          `<code>${removed.join(', ')}</code>\n\n` +
+          `ඉතිරි Whitelist කාසි ගණන: <b>${whitelist.size}</b>`;
+      }
+      break;
+    }
+
+    case 'clear_lists': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else {
+        const prevCount = whitelist.size;
+        whitelist.clear();
+        replyText = `🧹 <b>WHITELIST සම්පූර්ණයෙන්ම හිස් කරන ලදී!</b>\n(ඉවත් කරන ලද කාසි ගණන: ${prevCount})\n\n` +
+          `නැවත default කාසි එක් කිරීමට <code>/fwl_default</code> භාවිතා කරන්න.`;
+      }
+      break;
+    }
+
+    case 'blacklist_view': {
+      if (blacklist.size === 0) {
+        replyText = '🛡️ <b>Blacklist ලැයිස්තුව හිස්ය. කිසිදු කාසියක් Blacklist කර නොමැත.</b>';
+      } else {
+        const items = Array.from(blacklist.entries()).map(([sym, meta]) => {
+          return `• <b>${sym}</b>: ${meta.reason}`;
+        }).join('\n');
+        replyText = `🚫 <b>CURRENT BLACKLIST (${blacklist.size}):</b>\n\n${items}`;
+      }
+      break;
+    }
+
+    case 'blacklist_add': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = '⚠️ Usage: <code>/blacklist_add [COIN]</code> (උදා: /blacklist_add BSBUSDT)';
+      } else {
+        const raw = tokens[1].toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const sym = raw.endsWith('USDT') ? raw : `${raw}USDT`;
+        const reason = tokens.slice(2).join(' ') || 'Admin විසින් මැනුවල් ලෙස Blacklist කරන ලදී.';
+        blacklist.set(sym, { reason, added_at: new Date().toISOString() });
+        whitelist.delete(sym);
+        replyText = `🚫 <b>${sym} සාර්ථකව Blacklist කරන ලදී!</b>\nඑම කාසිය Whitelist එකෙන් ඉවත් කර නව සිග්නල් නතර කරන ලදී.`;
+      }
+      break;
+    }
+
+    case 'blacklist_remove': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = '⚠️ Usage: <code>/blacklist_remove [COIN]</code> (උදා: /blacklist_remove BSBUSDT)';
+      } else {
+        const raw = tokens[1].toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const sym = raw.endsWith('USDT') ? raw : `${raw}USDT`;
+        if (blacklist.has(sym)) {
+          blacklist.delete(sym);
+          coinLossCounts.delete(sym);
+          replyText = `✅ <b>${sym} Blacklist එකෙන් සාර්ථකව ඉවත් කරන ලදී!</b>`;
+        } else {
+          replyText = `ℹ️ ${sym} Blacklist ලැයිස්තුවේ නොමැත.`;
         }
       }
       break;
+    }
+
+    case 'set_margin': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = `⚙️ වත්මන් Admin Margin: $${botConfig.admin_default_margin || 0.8}\nUsage: <code>/set_margin &lt;val&gt;</code> (උදා: /set_margin 0.8)`;
+      } else {
+        const val = parseFloat(tokens[1]);
+        if (isNaN(val) || val <= 0) {
+          replyText = '❌ වලංගු Margin අගයක් ලබාදෙන්න (උදා: /set_margin 0.8).';
+        } else {
+          botConfig.admin_default_margin = val;
+          user.base_margin = val;
+          replyText = `💰 <b>Admin Margin අගය $${val.toFixed(2)} ලෙස සාර්ථකව වෙනස් කරන ලදී!</b>\n(අලුත් සාමාජිකයින්ට මෙය හිමිවේ)`;
+        }
+      }
+      break;
+    }
+
+    case 'set_leverage': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = `⚙️ වත්මන් Admin Leverage: ${botConfig.admin_default_leverage || 10}x\nUsage: <code>/set_leverage &lt;val&gt;</code> (උදා: /set_leverage 10)`;
+      } else {
+        const val = parseInt(tokens[1], 10);
+        if (isNaN(val) || val <= 0) {
+          replyText = '❌ වලංගු Leverage අගයක් ලබාදෙන්න (උදා: /set_leverage 10).';
+        } else {
+          botConfig.admin_default_leverage = val;
+          user.leverage = val;
+          replyText = `⚡ <b>Admin Leverage අගය ${val}x ලෙස සාර්ථකව වෙනස් කරන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_tp': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = `🎯 වත්මන් Admin TP: ${botConfig.admin_default_tp || 30}%\nUsage: <code>/set_tp &lt;val&gt;</code> (උදා: /set_tp 30)`;
+      } else {
+        const val = parseFloat(tokens[1]);
+        if (isNaN(val) || val <= 0) {
+          replyText = '❌ වලංගු Take Profit % අගයක් ලබාදෙන්න (උදා: /set_tp 30).';
+        } else {
+          botConfig.admin_default_tp = val;
+          user.fast_tp_pct = val;
+          replyText = `🎯 <b>Admin Take Profit % අගය ${val}% ලෙස සාර්ථකව වෙනස් කරන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_sl': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = `🛑 වත්මන් Admin SL: ${botConfig.admin_default_sl || 27}%\nUsage: <code>/set_sl &lt;val&gt;</code> (උදා: /set_sl 27)`;
+      } else {
+        const val = parseFloat(tokens[1]);
+        if (isNaN(val) || val <= 0) {
+          replyText = '❌ වලංගු Stop Loss % අගයක් ලබාදෙන්න (උදා: /set_sl 27).';
+        } else {
+          botConfig.admin_default_sl = val;
+          user.margin_sl_pct = val;
+          replyText = `🛑 <b>Admin Stop Loss % අගය ${val}% ලෙස සාර්ථකව වෙනස් කරන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_loss':
+    case 'set_rtp': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = `🩸 වත්මන් Max Loss Recover per Trade: $${botConfig.admin_max_loss_recover || 0.20}\nUsage: <code>/set_loss &lt;val&gt;</code> (උදා: /set_loss 0.20)`;
+      } else {
+        const val = parseFloat(tokens[1]);
+        if (isNaN(val) || val < 0) {
+          replyText = '❌ වලංගු Loss අගයක් ලබාදෙන්න (උදා: /set_loss 0.20).';
+        } else {
+          botConfig.admin_max_loss_recover = val;
+          user.blacklist_balance_set = val;
+          replyText = `🩸 <b>Admin Trade Max Recovery Loss අගය $${val.toFixed(2)} ලෙස සාර්ථකව සකසන ලදී!</b>\nසෑම trade එකකදීම signal එකකට එකතු කරන උපරිම loss එක: <b>$${val.toFixed(2)}</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_dir_limit': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 3) {
+        replyText = `⚖️ වත්මන් සීමා: Buys=${botConfig.max_buys}, Sells=${botConfig.max_sells}\nUsage: <code>/set_dir_limit &lt;buys&gt; &lt;sells&gt;</code> (උදා: /set_dir_limit 4 4)`;
+      } else {
+        const b = parseInt(tokens[1], 10);
+        const s = parseInt(tokens[2], 10);
+        if (isNaN(b) || isNaN(s) || b < 0 || s < 0) {
+          replyText = '❌ වලංගු සංඛ්‍යා ලබාදෙන්න (උදා: /set_dir_limit 4 4).';
+        } else {
+          botConfig.max_buys = b;
+          botConfig.max_sells = s;
+          replyText = `⚖️ <b>දිශානුගත සීමා (Direction Limits) සාර්ථකව පනවන ලදී!</b>\nඋපරිම BUYS: <b>${b}</b>\nඋපරිම SELLS: <b>${s}</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_stale_timeout': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = `⏱️ වත්මන් Stale Timeout: ${botConfig.stale_timeout_hours} පැය.\nUsage: <code>/set_stale_timeout &lt;hours&gt;</code> (උදා: /set_stale_timeout 6)`;
+      } else {
+        const hrs = parseFloat(tokens[1]);
+        if (isNaN(hrs) || hrs <= 0) {
+          replyText = '❌ වලංගු පැය ගණනක් ලබාදෙන්න (උදා: /set_stale_timeout 6).';
+        } else {
+          botConfig.stale_timeout_hours = hrs;
+          replyText = `⏱️ <b>Stale Trade Timeout අගය ${hrs} පැය ලෙස සාර්ථකව සකසන ලදී!</b>\nහිරවූ ට්‍රේඩ් පැය ${hrs} කට පසු ඉවත් කරනු ලැබේ.`;
+        }
+      }
+      break;
+    }
+
+    case 'set_signal_time': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 3) {
+        replyText = `🕒 වත්මන් Signal වේලාව: ${botConfig.signal_start_time || '00:00'} - ${botConfig.signal_end_time || '23:59'}\nUsage: <code>/set_signal_time &lt;start&gt; &lt;end&gt;</code> (උදා: /set_signal_time 08:00 23:00)`;
+      } else {
+        botConfig.signal_start_time = tokens[1];
+        botConfig.signal_end_time = tokens[2];
+        replyText = `🕒 <b>Signal ක්‍රියාත්මක වේලාව සාර්ථකව සකසන ලදී!</b>\nක්‍රියාත්මක කාලය: <b>${tokens[1]} සිට ${tokens[2]} දක්වා</b>`;
+      }
+      break;
+    }
+
+    case 'user_view': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = '⚠️ Usage: <code>/user_view &lt;chat_id&gt;</code>';
+      } else {
+        const targetId = tokens[1];
+        const u = users.get(targetId);
+        if (!u) {
+          replyText = `❌ User ID <code>${targetId}</code> සොයාගත නොහැක.`;
+        } else {
+          const activePositions = positions.filter((p) => p.chat_id === targetId && p.is_open === 1);
+          replyText = `👤 <b>USER DETAILS: ${u.full_name}</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `• <b>Chat ID:</b> <code>${u.chat_id}</code>\n` +
+            `• <b>Username:</b> @${u.username || 'none'}\n` +
+            `• <b>තත්වය:</b> ${u.is_approved ? 'APPROVED ✅' : 'PENDING ⏳'} | ${u.is_active ? 'ACTIVE 🟢' : 'PAUSED ⏸️'}\n` +
+            `• <b>Role:</b> ${u.is_admin ? 'ADMIN 👑' : 'MEMBER 👤'}\n` +
+            `• <b>Margin:</b> $${u.base_margin.toFixed(2)} (${u.leverage}x Leverage)\n` +
+            `• <b>TP %:</b> ${u.fast_tp_pct}% | <b>SL %:</b> ${u.margin_sl_pct}%\n` +
+            `• <b>Max Trades:</b> ${activePositions.length} / ${u.max_user_trades}\n` +
+            `• <b>Current Loss Pool:</b> $${u.global_loss_pool.toFixed(4)}\n` +
+            `• <b>Recovered Loss:</b> $${u.global_loss_completed.toFixed(4)}\n` +
+            `• <b>Trading Hours:</b> ${u.user_custom_time_enabled ? `${String(u.user_start_hour).padStart(2,'0')}:${String(u.user_start_minute).padStart(2,'0')} - ${String(u.user_end_hour).padStart(2,'0')}:${String(u.user_end_minute).padStart(2,'0')}` : '24 Hours (Full-Time)'}\n` +
+            `• <b>Last Active:</b> ${new Date(u.last_interaction).toLocaleTimeString()}`;
+        }
+      }
+      break;
+    }
+
+    case 'remove_user': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = '⚠️ Usage: <code>/remove_user &lt;chat_id&gt;</code>';
+      } else {
+        const targetId = tokens[1];
+        if (users.has(targetId)) {
+          users.delete(targetId);
+          positions.forEach((p) => {
+            if (p.chat_id === targetId && p.is_open === 1) {
+              p.is_open = 0;
+              p.close_reason = 'MANUAL_CLOSE';
+            }
+          });
+          replyText = `🗑️ <b>User <code>${targetId}</code> පද්ධතියෙන් සාර්ථකව ඉවත් කරන ලදී!</b>`;
+        } else {
+          replyText = `❌ User ID <code>${targetId}</code> සොයාගත නොහැක.`;
+        }
+      }
+      break;
+    }
+
+    case 'pause_user': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = '⚠️ Usage: <code>/pause_user &lt;chat_id&gt;</code>';
+      } else {
+        const targetId = tokens[1];
+        const target = users.get(targetId);
+        if (target) {
+          target.is_active = 0;
+          replyText = `⏸️ <b>User <code>${targetId}</code> (${target.full_name}) ගේ සිග්නල් තාවකාලිකව නවතා ඇත.</b>`;
+        } else {
+          replyText = `❌ User ID <code>${targetId}</code> සොයාගත නොහැක.`;
+        }
+      }
+      break;
+    }
+
+    case 'resume_user': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = '⚠️ Usage: <code>/resume_user &lt;chat_id&gt;</code>';
+      } else {
+        const targetId = tokens[1];
+        const target = users.get(targetId);
+        if (target) {
+          target.is_active = 1;
+          replyText = `▶️ <b>User <code>${targetId}</code> (${target.full_name}) ගේ සිග්නල් සාර්ථකව නැවත අරඹන ලදී!</b>`;
+        } else {
+          replyText = `❌ User ID <code>${targetId}</code> සොයාගත නොහැක.`;
+        }
+      }
+      break;
+    }
+
+    case 'set_user_margin': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 3) {
+        replyText = '⚠️ Usage: <code>/set_user_margin &lt;chat_id&gt; &lt;val&gt;</code>';
+      } else {
+        const target = users.get(tokens[1]);
+        const val = parseFloat(tokens[2]);
+        if (!target || isNaN(val) || val <= 0) {
+          replyText = '❌ වලංගු Chat ID එකක් සහ Margin අගයක් ඇතුලත් කරන්න.';
+        } else {
+          target.base_margin = val;
+          replyText = `💰 <b>User <code>${tokens[1]}</code> (${target.full_name}) Margin අගය $${val.toFixed(2)} ලෙස වෙනස් කරන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_user_leverage': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 3) {
+        replyText = '⚠️ Usage: <code>/set_user_leverage &lt;chat_id&gt; &lt;val&gt;</code>';
+      } else {
+        const target = users.get(tokens[1]);
+        const val = parseInt(tokens[2], 10);
+        if (!target || isNaN(val) || val <= 0) {
+          replyText = '❌ වලංගු Chat ID එකක් සහ Leverage අගයක් ඇතුලත් කරන්න.';
+        } else {
+          target.leverage = val;
+          replyText = `⚡ <b>User <code>${tokens[1]}</code> (${target.full_name}) Leverage අගය ${val}x ලෙස වෙනස් කරන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_user_tp': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 3) {
+        replyText = '⚠️ Usage: <code>/set_user_tp &lt;chat_id&gt; &lt;val&gt;</code>';
+      } else {
+        const target = users.get(tokens[1]);
+        const val = parseFloat(tokens[2]);
+        if (!target || isNaN(val) || val <= 0) {
+          replyText = '❌ වලංගු Chat ID එකක් සහ Take Profit % අගයක් ඇතුලත් කරන්න.';
+        } else {
+          target.fast_tp_pct = val;
+          replyText = `🎯 <b>User <code>${tokens[1]}</code> (${target.full_name}) Take Profit % අගය ${val}% ලෙස වෙනස් කරන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_user_sl': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 3) {
+        replyText = '⚠️ Usage: <code>/set_user_sl &lt;chat_id&gt; &lt;val&gt;</code>';
+      } else {
+        const target = users.get(tokens[1]);
+        const val = parseFloat(tokens[2]);
+        if (!target || isNaN(val) || val <= 0) {
+          replyText = '❌ වලංගු Chat ID එකක් සහ Stop Loss % අගයක් ඇතුලත් කරන්න.';
+        } else {
+          target.margin_sl_pct = val;
+          replyText = `🛑 <b>User <code>${tokens[1]}</code> (${target.full_name}) Stop Loss % අගය ${val}% ලෙස වෙනස් කරන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_user_max_trades': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 3) {
+        replyText = '⚠️ Usage: <code>/set_user_max_trades &lt;chat_id&gt; &lt;val&gt;</code>';
+      } else {
+        const target = users.get(tokens[1]);
+        const val = parseInt(tokens[2], 10);
+        if (!target || isNaN(val) || val <= 0) {
+          replyText = '❌ වලංගු Chat ID එකක් සහ Max Trades අගයක් ඇතුලත් කරන්න.';
+        } else {
+          target.max_user_trades = val;
+          replyText = `🔢 <b>User <code>${tokens[1]}</code> (${target.full_name}) උපරිම Trade ගණන ${val} ලෙස සකසන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'set_user_time': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 4) {
+        replyText = '⚠️ Usage: <code>/set_user_time &lt;chat_id&gt; &lt;START (e.g. 08:00)&gt; &lt;END (e.g. 22:00)&gt;</code>';
+      } else {
+        const target = users.get(tokens[1]);
+        const [sH, sM] = tokens[2].split(':').map((v) => parseInt(v, 10));
+        const [eH, eM] = tokens[3].split(':').map((v) => parseInt(v, 10));
+        if (!target || isNaN(sH) || isNaN(eH)) {
+          replyText = '❌ වලංගු Chat ID සහ වේලාවක් ඇතුලත් කරන්න (උදා: /set_user_time 123456 08:00 23:00)';
+        } else {
+          target.user_start_hour = sH;
+          target.user_start_minute = isNaN(sM) ? 0 : sM;
+          target.user_end_hour = eH;
+          target.user_end_minute = isNaN(eM) ? 0 : eM;
+          target.user_custom_time_enabled = 1;
+          replyText = `⏰ <b>User <code>${tokens[1]}</code> (${target.full_name}) වෙළඳ වේලාව ${tokens[2]} සිට ${tokens[3]} දක්වා සකසන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'broadcast': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = '⚠️ Usage: <code>/broadcast &lt;පණිවිඩය&gt;</code>';
+      } else {
+        const broadcastMsgText = tokens.slice(1).join(' ');
+        let sentCount = 0;
+        users.forEach((u) => {
+          if (u.is_approved === 1) {
+            const bMsg: TelegramMessage = {
+              id: `bcast-${Date.now()}-${u.chat_id}`,
+              timestamp: new Date().toLocaleTimeString(),
+              chat_id: u.chat_id,
+              sender_name: '📢 Admin Announcement',
+              is_from_bot: true,
+              text: `📢 <b>ADMIN BROADCAST ANNOUNCEMENT:</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n${broadcastMsgText}`,
+            };
+            broadcastTelegramAlert(bMsg);
+            sentCount++;
+          }
+        });
+        replyText = `📢 <b>BROADCAST SUCCESSFUL!</b>\nපණිවිඩය සාමාජිකයින් <b>${sentCount}</b> දෙනෙකු වෙත සාර්ථකව යවන ලදී.`;
+      }
+      break;
+    }
+
+    case 'msg': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 3) {
+        replyText = '⚠️ Usage: <code>/msg &lt;chat_id&gt; &lt;පණිවිඩය&gt;</code>';
+      } else {
+        const targetId = tokens[1];
+        const personalText = tokens.slice(2).join(' ');
+        const targetUser = users.get(targetId);
+        if (!targetUser) {
+          replyText = `❌ User ID <code>${targetId}</code> සොයාගත නොහැක.`;
+        } else {
+          const directMsg: TelegramMessage = {
+            id: `msg-${Date.now()}-${targetId}`,
+            timestamp: new Date().toLocaleTimeString(),
+            chat_id: targetId,
+            sender_name: '💬 Admin Private Message',
+            is_from_bot: true,
+            text: `💬 <b>ADMIN PRIVATE MESSAGE:</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n${personalText}`,
+          };
+          broadcastTelegramAlert(directMsg);
+          replyText = `✉️ <b>පෞද්ගලික පණිවිඩය User <code>${targetId}</code> (${targetUser.full_name}) වෙත සාර්ථකව යවන ලදී!</b>`;
+        }
+      }
+      break;
+    }
+
+    case 'coin_stats': {
+      replyText = generateCoinStatsReport();
+      break;
+    }
 
     case 'menu':
-      replyText = `📋 <b>REDBULL MASTER BOT MENU</b>\n\n` +
-        `• <b>/status</b> - Current open positions & PnL\n` +
-        `• <b>/positions</b> - View all active trades\n` +
-        `• <b>/test_signal</b> - Test trade dispatch alert\n` +
-        `• <b>/whitelist</b> - View supported coins\n` +
-        `• <b>/my_on</b> / <b>/my_off</b> - Pause or resume signals\n` +
-        `• <b>/skip &lt;num&gt;</b> - Cancel trade & refund attached loss\n` +
-        (isAdmin
-          ? `\n👑 <b>Admin Controls:</b>\n` +
-            `• /bot_on & /bot_off - Master toggle\n` +
-            `• /users - Manage members\n` +
-            `• /approve &lt;id&gt; - Approve new member\n` +
-            `• /approve_all - Approve all pending members\n` +
-            `• /toggle_paper - Switch paper / live trading\n` +
-            `• /set_admin - Set yourself as Admin\n` +
-            `• /coin_stats - Whitelist overview`
-          : `\n<i>Need admin access? Send /set_admin</i>`);
+      replyText = `📜 <b>RED BULL MASTER ADMIN COMMANDS MENU</b>\n` +
+        `━━━━━━━━━━━━━━━━━━━━━━━━━━\n` +
+        `<b>1. මූලික පාලනය (Basic Controls):</b>\n` +
+        `• /bot_on : බොට් සක්රීය කරයි.\n` +
+        `• /bot_off : බොට් තාවකාලිකව නවතයි.\n` +
+        `• /retune : Normal (Inverted) සහ Trend-Following අතර මාරු වේ.\n` +
+        `• /toggle_paper : Paper Trading සහ Real Binance අතර මාරු වේ.\n` +
+        `• /status : පද්ධතියේ සම්පූර්ණ තත්ත්වය පෙන්වයි.\n` +
+        `• /skip : විවෘත ට්රේඩ් එකක් මඟහැර Attached Loss එක නැවත Refund කරයි.\n` +
+        `• /max_trade : උපරිම trade ගණන.\n\n` +
+        `<b>2. Smart Scanner & කාසි පාලනය (Market & Coins):</b>\n` +
+        `• /auto_scan : Binance පීරා $0.80 Margin එකට ගැලපෙන හොඳම Altcoins ස්වයංක්රීයව Whitelist කරයි.\n` +
+        `• /sync_coins : Binance Futures සක්රීය කාසි Private API එකෙන් කියවයි.\n` +
+        `• /fwl_default : මූලික කාසි 50 ම නැවත Whitelist එකට එක් කරයි.\n` +
+        `• /fwl_add [COINS] : කාසි Whitelist එකට එක් කරයි.\n` +
+        `• /fwl_remove [COINS] : කාසි Whitelist එකෙන් ඉවත් කරයි.\n` +
+        `• /clear_lists : Whitelist ලැයිස්තුව සම්පූර්ණයෙන්ම හිස් කරයි.\n` +
+        `• /blacklist_view : Blacklist ලැයිස්තුව පෙන්වයි.\n` +
+        `• /blacklist_add [COIN] : කාසි Blacklist කරයි.\n` +
+        `• /blacklist_remove [COIN] : කාසි Blacklist එකෙන් ඉවත් කරයි.\n\n` +
+        `<b>3. Admin Default සැකසුම් (අලුත් සාමාජිකයින්ට මෙය හිමිවේ):</b>\n` +
+        `• /set_margin [VAL] : Admin Margin අගය වෙනස් කිරීම (උදා: /set_margin 0.8).\n` +
+        `• /set_leverage [VAL] : Admin Leverage අගය වෙනස් කිරීම (උදා: /set_leverage 10).\n` +
+        `• /set_tp [VAL] : Admin Take Profit % වෙනස් කිරීම (උදා: /set_tp 30).\n` +
+        `• /set_sl [VAL] : Admin Stop Loss % වෙනස් කිරීම (උදා: /set_sl 27).\n` +
+        `• /set_loss [VAL] : Admin trade එකකදි signal එකකට එකතු කරන උපරුම loss එක සැකසිම (උදා: /set_loss 0.20).\n\n` +
+        `<b>4. අවදානම් පාලනය (Risk Controls):</b>\n` +
+        `• /set_dir_limit [BUYS] [SELLS] : දිශානුගත සීමා පනවයි (උදා: /set_dir_limit 4 4).\n` +
+        `• /set_stale_timeout [HOURS] : හිරවූ ට්රේඩ් ඉවත් කිරීමේ කාලය. (Duration)\n` +
+        `• /set_signal_time [START] [END] : ක්රියාත්මක වේලාව.\n\n` +
+        `<b>5. කණ්ඩායම් කළමනාකරණය (Team Management):</b>\n` +
+        `• /users : සියලු සාමාජිකයින්ගේ කෙටි ලැයිස්තුව.\n` +
+        `• /user_view [CHAT_ID] : සාමාජිකයෙකුගේ සම්පූර්ණ විස්තර බැලීම.\n` +
+        `• /approve [CHAT_ID] : සාමාජිකයෙකු අනුමත කරයි.\n` +
+        `• /remove_user [CHAT_ID] : සාමාජිකයෙකු ඉවත් කරයි.\n` +
+        `• /pause_user [CHAT_ID] : සාමාජිකයාගේ සිග්නල් නවතයි.\n` +
+        `• /resume_user [CHAT_ID] : සාමාජිකයාගේ සිග්නල් නැවත අරඹයි.\n\n` +
+        `<b>6. සාමාජිකයින්ගේ Settings වෙනස් කිරීම:</b>\n` +
+        `• /set_user_margin [CHAT_ID] [VAL] : Margin වෙනස් කිරීම.\n` +
+        `• /set_user_leverage [CHAT_ID] [VAL] : Leverage වෙනස් කිරීම.\n` +
+        `• /set_user_tp [CHAT_ID] [VAL] : Take Profit වෙනස් කිරීම.\n` +
+        `• /set_user_sl [CHAT_ID] [VAL] : Stop Loss වෙනස් කිරීම.\n` +
+        `• /set_loss [VAL] : Admin trade එකකදි signal එකකට එකතු කරන උපරුම loss එක සැකසිම (උදා: /set_rtp 0.20).\n` +
+        `• /set_user_max_trades [CHAT_ID] [VAL] : උපරිම trade ගණන.\n` +
+        `• /set_user_time [CHAT_ID] [START] [END] : වෙළඳ වේලාව.\n\n` +
+        `<b>7. පණිවිඩ යැවීම සහ වාර්තා (Messaging & Reports):</b>\n` +
+        `• /broadcast [MSG] : සියලු සාමාජිකයින්ට එකවර පණිවිඩ යැවීම.\n` +
+        `• /msg [CHAT_ID] [MSG] : එක් සාමාජිකයෙකුට පෞද්ගලික පණිවිඩයක් යැවීම.\n` +
+        `• /coin_stats : එක් එක් කාසියේ කාර්යසාධනය පෙන්වයි.`;
+      buttons = [
+        [
+          { text: '🟢 Bot ON', callback_data: 'cmd_bot_on' },
+          { text: '⏸️ Bot OFF', callback_data: 'cmd_bot_off' },
+        ],
+        [
+          { text: '📊 Status', callback_data: 'my_status' },
+          { text: '🪙 Default 50 Coins', callback_data: 'cmd_fwl_default' },
+        ],
+        [
+          { text: '👥 Users', callback_data: 'cmd_users' },
+          { text: '📈 Coin Stats', callback_data: 'cmd_coin_stats' },
+        ],
+      ];
       break;
 
     case 'positions':
@@ -1812,6 +2492,27 @@ function handleCallbackQuery(chatId: string, data: string): { success: boolean; 
   if (data === 'my_status') {
     handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/status');
     return { success: true, message: 'Status sent' };
+  }
+
+  if (data === 'cmd_bot_on') {
+    handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/bot_on');
+    return { success: true, message: 'Bot started' };
+  }
+  if (data === 'cmd_bot_off') {
+    handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/bot_off');
+    return { success: true, message: 'Bot paused' };
+  }
+  if (data === 'cmd_fwl_default') {
+    handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/fwl_default');
+    return { success: true, message: 'Default coins restored' };
+  }
+  if (data === 'cmd_users') {
+    handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/users');
+    return { success: true, message: 'Users listed' };
+  }
+  if (data === 'cmd_coin_stats') {
+    handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/coin_stats');
+    return { success: true, message: 'Coin stats shown' };
   }
 
   if (isAdmin && (data.startsWith('approve:') || data.startsWith('reject:'))) {

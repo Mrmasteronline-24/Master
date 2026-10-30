@@ -70,6 +70,14 @@ export interface BotConfig {
   admin_chat_id: string;
   binance_connected: boolean;
   binance_key_preview: string;
+  // Admin defaults & Risk controls
+  admin_default_margin?: number;
+  admin_default_leverage?: number;
+  admin_default_tp?: number;
+  admin_default_sl?: number;
+  admin_max_loss_recover?: number;
+  signal_start_time?: string;
+  signal_end_time?: string;
   // Telegram Bot integration
   telegram_bot_token?: string;
   telegram_connected?: boolean;
