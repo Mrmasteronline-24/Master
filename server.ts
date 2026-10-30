@@ -93,265 +93,48 @@ let blacklist: Map<string, { reason: string; added_at: string }> = new Map([
   ['LUNAUSDT', { reason: 'High volatility risk', added_at: new Date().toISOString() }],
   ['FTTUSDT', { reason: 'Exchange token risk', added_at: new Date().toISOString() }],
 ]);
+// Clean state for real Telegram users and live positions
+let users: Map<string, User> = new Map();
 
-let users: Map<string, User> = new Map([
-  [
-    '1088492011',
-    {
-      chat_id: '1088492011',
-      full_name: 'Master Admin',
-      username: 'master_admin',
-      is_approved: 1,
-      is_active: 1,
-      is_admin: 1,
-      base_margin: 1.0,
-      leverage: 10,
-      margin_sl_pct: 25.0,
-      fast_tp_pct: 30.0,
-      rtp_pct: 20.0,
-      blacklist_balance_set: 0.10,
-      max_user_trades: 5,
-      user_start_hour: 0,
-      user_start_minute: 0,
-      user_end_hour: 23,
-      user_end_minute: 59,
-      user_custom_time_enabled: 0,
-      is_muted: 0,
-      global_loss_pool: 0.45,
-      global_loss_completed: 4.80,
-      loss_recovery_step: 3,
-      last_interaction: new Date().toISOString(),
-    },
-  ],
-  [
-    '982734110',
-    {
-      chat_id: '982734110',
-      full_name: 'Kasun Bandara',
-      username: 'kasun_trade_pro',
-      is_approved: 1,
-      is_active: 1,
-      is_admin: 0,
-      base_margin: 0.8,
-      leverage: 10,
-      margin_sl_pct: 27.0,
-      fast_tp_pct: 30.0,
-      rtp_pct: 15.0,
-      blacklist_balance_set: 0.10,
-      max_user_trades: 4,
-      user_start_hour: 8,
-      user_start_minute: 0,
-      user_end_hour: 22,
-      user_end_minute: 0,
-      user_custom_time_enabled: 1,
-      is_muted: 0,
-      global_loss_pool: 0.82,
-      global_loss_completed: 2.45,
-      loss_recovery_step: 2,
-      last_interaction: new Date().toISOString(),
-    },
-  ],
-  [
-    '774819203',
-    {
-      chat_id: '774819203',
-      full_name: 'Nuwan Perera',
-      username: 'nuwan_lk',
-      is_approved: 1,
-      is_active: 1,
-      is_admin: 0,
-      base_margin: 0.6,
-      leverage: 10,
-      margin_sl_pct: 27.0,
-      fast_tp_pct: 25.0,
-      rtp_pct: 15.0,
-      blacklist_balance_set: 0.10,
-      max_user_trades: 3,
-      user_start_hour: 0,
-      user_start_minute: 0,
-      user_end_hour: 23,
-      user_end_minute: 59,
-      user_custom_time_enabled: 0,
-      is_muted: 0,
-      global_loss_pool: 0.0,
-      global_loss_completed: 1.20,
-      loss_recovery_step: 0,
-      last_interaction: new Date().toISOString(),
-    },
-  ],
-  [
-    '649201994',
-    {
-      chat_id: '649201994',
-      full_name: 'Chaminda Rathnayake',
-      username: 'chaminda_fx',
-      is_approved: 0,
-      is_active: 0,
-      is_admin: 0,
-      base_margin: 0.8,
-      leverage: 10,
-      margin_sl_pct: 27.0,
-      fast_tp_pct: 30.0,
-      rtp_pct: 15.0,
-      blacklist_balance_set: 0.10,
-      max_user_trades: 5,
-      user_start_hour: 0,
-      user_start_minute: 0,
-      user_end_hour: 23,
-      user_end_minute: 59,
-      user_custom_time_enabled: 0,
-      is_muted: 0,
-      global_loss_pool: 0.0,
-      global_loss_completed: 0.0,
-      loss_recovery_step: 0,
-      last_interaction: new Date().toISOString(),
-    },
-  ],
-]);
+// If ADMIN_CHAT_ID is provided via environment variables (and not the old placeholder), register admin
+if (process.env.ADMIN_CHAT_ID && process.env.ADMIN_CHAT_ID !== '1088492011') {
+  users.set(process.env.ADMIN_CHAT_ID, {
+    chat_id: process.env.ADMIN_CHAT_ID,
+    full_name: 'Master Admin',
+    username: 'admin',
+    is_approved: 1,
+    is_active: 1,
+    is_admin: 1,
+    base_margin: 1.0,
+    leverage: 10,
+    margin_sl_pct: 25.0,
+    fast_tp_pct: 30.0,
+    rtp_pct: 20.0,
+    blacklist_balance_set: 0.10,
+    max_user_trades: 5,
+    user_start_hour: 0,
+    user_start_minute: 0,
+    user_end_hour: 23,
+    user_end_minute: 59,
+    user_custom_time_enabled: 0,
+    is_muted: 0,
+    global_loss_pool: 0.0,
+    global_loss_completed: 0.0,
+    loss_recovery_step: 0,
+    last_interaction: new Date().toISOString(),
+  });
+}
 
-let positions: UserPosition[] = [
-  {
-    id: 101,
-    chat_id: '1088492011',
-    user_name: 'Master Admin',
-    symbol: 'SOLUSDT',
-    side: 'BUY',
-    entry_price: 182.40,
-    current_price: 184.22,
-    base_tp_price: 184.50,
-    recovery_tp_price: 185.80,
-    tp_price: 185.80,
-    sl_price: 177.84,
-    margin: 1.0,
-    leverage: 10,
-    attached_loss: 0.09,
-    signal_num: 139,
-    opened_at: Date.now() - 42 * 60 * 1000,
-    is_open: 1,
-    reminders_sent: 1,
-    be_alert_sent: false,
-  },
-  {
-    id: 102,
-    chat_id: '982734110',
-    user_name: 'Kasun Bandara',
-    symbol: 'DOGEUSDT',
-    side: 'BUY',
-    entry_price: 0.1742,
-    current_price: 0.1768,
-    base_tp_price: 0.1770,
-    recovery_tp_price: 0.1795,
-    tp_price: 0.1795,
-    sl_price: 0.1695,
-    margin: 0.8,
-    leverage: 10,
-    attached_loss: 0.12,
-    signal_num: 140,
-    opened_at: Date.now() - 25 * 60 * 1000,
-    is_open: 1,
-    reminders_sent: 0,
-    be_alert_sent: false,
-  },
-  {
-    id: 103,
-    chat_id: '774819203',
-    user_name: 'Nuwan Perera',
-    symbol: 'AVAXUSDT',
-    side: 'SELL',
-    entry_price: 28.50,
-    current_price: 28.12,
-    base_tp_price: 27.60,
-    recovery_tp_price: 27.60,
-    tp_price: 27.60,
-    sl_price: 29.26,
-    margin: 0.6,
-    leverage: 10,
-    attached_loss: 0.0,
-    signal_num: 141,
-    opened_at: Date.now() - 15 * 60 * 1000,
-    is_open: 1,
-    reminders_sent: 0,
-    be_alert_sent: false,
-  },
-  {
-    id: 99,
-    chat_id: '1088492011',
-    user_name: 'Master Admin',
-    symbol: 'NEARUSDT',
-    side: 'BUY',
-    entry_price: 4.82,
-    current_price: 4.96,
-    base_tp_price: 4.90,
-    recovery_tp_price: 4.95,
-    tp_price: 4.95,
-    sl_price: 4.69,
-    margin: 1.0,
-    leverage: 10,
-    attached_loss: 0.18,
-    signal_num: 138,
-    opened_at: Date.now() - 3 * 3600 * 1000,
-    is_open: 0,
-    reminders_sent: 2,
-    pnl: 0.29,
-    pnl_pct: 29.04,
-    closed_at: Date.now() - 2 * 3600 * 1000,
-    close_reason: 'TP_HIT',
-    be_alert_sent: true,
-  },
-];
-
-let nextPositionId = 104;
+let positions: UserPosition[] = [];
+let nextPositionId = 101;
 
 // Cache of live coin market statistics
 let marketCache: Map<string, CoinMarket> = new Map();
 let lastMarketFetchTime = 0;
 let signalCooldowns: Map<string, number> = new Map();
 
-// Telegram messages history
-let telegramMessages: TelegramMessage[] = [
-  {
-    id: 'msg-1',
-    timestamp: new Date(Date.now() - 60 * 60 * 1000).toLocaleTimeString(),
-    chat_id: '1088492011',
-    sender_name: 'Admin',
-    is_from_bot: false,
-    text: '/status',
-  },
-  {
-    id: 'msg-2',
-    timestamp: new Date(Date.now() - 59 * 60 * 1000).toLocaleTimeString(),
-    chat_id: '1088492011',
-    sender_name: 'RedBull Master Bot',
-    is_from_bot: true,
-    text: `⚡ <b>REDBULL LOSS RECOVERY ENGINE STATUS</b> ⚡\n\n🟢 <b>Engine:</b> ACTIVE (Running)\n🛡️ <b>Trading Mode:</b> PAPER TRADING (Safety ON)\n📊 <b>Whitelisted Coins:</b> ${whitelist.size} Coins\n👥 <b>Active Members:</b> 3 Approved\n💼 <b>Open Global Positions:</b> 3 Trades\n\n💡 <i>All indicators and pivot scanner running normally.</i>`,
-    buttons: [
-      [
-        { text: '📊 Refresh Status', callback_data: 'my_status' },
-        { text: '🔕 Mute Alerts', callback_data: 'mute:all' },
-      ],
-    ],
-  },
-  {
-    id: 'msg-3',
-    timestamp: new Date(Date.now() - 42 * 60 * 1000).toLocaleTimeString(),
-    chat_id: '1088492011',
-    sender_name: 'RedBull Master Bot',
-    is_from_bot: true,
-    text: `🎯 <b>NEW SIGNAL #139: SOLUSDT (BUY / LONG)</b> 🚀\n\n` +
-      `💵 <b>Entry Price:</b> $182.4000\n` +
-      `🎯 <b>Target TP:</b> $185.8000\n` +
-      `🛑 <b>Stop Loss:</b> $177.8400\n` +
-      `⚙️ <b>Margin:</b> $1.00 (10x Lev)\n` +
-      `🩹 <b>Attached Loss Recovery:</b> $0.0900\n\n` +
-      `⚠️ <i>Risk Warning: Always follow disciplined risk parameters.</i>`,
-    buttons: [
-      [
-        { text: '🚫 Skip Trade & Refund Loss', callback_data: 'skip_trade:139' },
-        { text: '🔕 Mute Reminder', callback_data: 'mute:139' },
-      ],
-    ],
-  },
-];
+// Telegram messages history for web dashboard audit
+let telegramMessages: TelegramMessage[] = [];
 
 // --- REAL 5M BINANCE FUTURES CANDLESTICK KLINES FEED ---
 
@@ -908,6 +691,12 @@ function broadcastTelegramAlert(msg: TelegramMessage): void {
           res.on('data', (c) => (body += c));
           res.on('end', () => {
             if (res.statusCode && res.statusCode >= 400) {
+              if (body.includes('chat not found')) {
+                console.warn(`[Telegram Notice] Chat ${msg.chat_id} has not started the bot yet. Deactivating to prevent retry errors.`);
+                const u = users.get(msg.chat_id);
+                if (u) u.is_active = 0;
+                return;
+              }
               console.warn(`[Telegram API Error] HTTP ${res.statusCode} for chat ${msg.chat_id}: ${body}`);
               // If parse mode error, retry as plain text without HTML
               if (!isRetry && body.includes("can't parse entities")) {
@@ -1143,6 +932,15 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
   }
   if (openPositions.length >= botConfig.max_signals_global) {
     return { success: false, message: `Global max trades reached (${openPositions.length}/${botConfig.max_signals_global}).`, dispatchedCount: 0 };
+  }
+
+  const activeUsers = Array.from(users.values()).filter((u) => u.is_approved === 1 && u.is_active === 1);
+  if (activeUsers.length === 0) {
+    return {
+      success: false,
+      message: 'Waiting for users to connect via Telegram. Send /start to the bot in Telegram to start receiving signals.',
+      dispatchedCount: 0,
+    };
   }
 
   botConfig.signal_count += 1;
