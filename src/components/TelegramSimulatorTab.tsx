@@ -39,11 +39,12 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
   const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
 
   const quickCommands = [
-    { label: '🚀 01. Normal Signal', cmd: '/test_signal SOL normal', desc: '01. Loss නැති Trade Signal' },
-    { label: '🩹 02. Loss Signal', cmd: '/test_signal SOL loss', desc: '02. Loss Trade Signal' },
-    { label: '🛡️ 03. SL to Entry', cmd: '/be', desc: '03. Stop Loss එක Entry Point එකට ගැනීමේ පණිවිඩය' },
-    { label: '⏰ 04. Time Expired', cmd: '/timeout', desc: '04. කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න' },
-    { label: '📋 05. Copy Signal', cmd: '/copy', desc: '05. Coin, TP, SL එකවර කොපි කිරීම' },
+    { label: '01. Normal Trade', cmd: '/test_signal SOL normal', desc: '01. Loss නැති Trade Signal' },
+    { label: '02. Loss Trade', cmd: '/test_signal SOL loss', desc: '02. Loss Trade Signal' },
+    { label: '03. SL to Entry', cmd: '/be', desc: '03. Stop Loss එක Entry Point එකට ගන්න' },
+    { label: '04. Time Expired', cmd: '/timeout', desc: '04. කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න' },
+    { label: '05. Final Report', cmd: '/report', desc: '05. දවස අවසානයේ එන Final Report එක' },
+    { label: '08. /ok (Mute)', cmd: '/ok', desc: '08. Reminder alerts mute කරන ලදී' },
     { label: '/status', cmd: '/status', desc: 'Current trades & loss pool' },
     { label: '/positions', cmd: '/positions', desc: 'Active trades list' },
     { label: '/whitelist', cmd: '/whitelist', desc: 'Whitelisted coins' },
@@ -262,96 +263,56 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
       {/* Right Col: 5 Requirements Verification & Webhook Setup */}
       <div className="space-y-6">
         
-        {/* 🎯 Interactive Verification Panel for the 5 Requirements */}
+        {/* 🎯 Interactive Verification Panel for the 10 Specific Alerts */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
           <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
             <Sparkles className="w-5 h-5 text-amber-400" />
             <div>
-              <h3 className="text-sm font-bold text-white">5 Requirements Quick Verification</h3>
-              <p className="text-[11px] text-slate-400">පහත බොත්තම් මඟින් ගැටලු 5 ක්ෂණිකව පරීක්ෂා කරන්න</p>
+              <h3 className="text-sm font-bold text-white">Alerts 1 - 10 Verification</h3>
+              <p className="text-[11px] text-slate-400">මම ඉල්ලූ Alerts 10 නිශ්චිත අච්චුව අනුව පරීක්ෂා කරන්න</p>
             </div>
           </div>
 
-          <div className="space-y-2.5">
-            {/* 01. Non-Loss Signal */}
-            <button
-              onClick={() => triggerTestCommand('/test_signal SOL normal')}
-              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-emerald-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
-            >
-              <span className="px-1.5 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold rounded mt-0.5">01</span>
-              <div>
-                <div className="text-xs font-bold text-emerald-300 group-hover:text-emerald-200">
-                  Loss නැති Trade එකක් සදහා
+          <div className="space-y-2 max-h-[520px] overflow-y-auto pr-1">
+            {[
+              { id: 1, title: '01. Loss නැති Trade', desc: 'Coin, Deraction, Targert Tp, Stop Loss, Margin, Recovery Loss, Pool, Duration' },
+              { id: 2, title: '02. Loss Trade (Recovery)', desc: 'Coin, Deraction, Targert Tp, Stop Loss, Margin, Recovery Loss, Pool, Duration' },
+              { id: 3, title: '03. Stop Loss to Entry Point', desc: 'Coin, Entry Price, "Stop Loss එක ඉහත අගයට වෙනස් කරන්න"' },
+              { id: 4, title: '04. Time Expired Alert', desc: 'Coin, "කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න."' },
+              { id: 5, title: '05. Final Performance Report', desc: '📊 FINAL PERFORMANCE REPORT (Wins, Losses, Blacklisted, Top Coins)' },
+              { id: 6, title: '06. Take Profit (Win)! 🟢', desc: '🎯 TAKE PROFIT (WIN)! 🟢 (Coin, Profit, Exit Price)' },
+              { id: 7, title: '07. Stop Loss (Loss)! 🔴', desc: '🛑 STOP LOSS (LOSS)! 🔴 (Coin, Loss Amount, Exit Price)' },
+              { id: 8, title: '08. Reminder /Ok (Mute)', desc: '✅ Reminder alerts mute කරන ලදී!' },
+              { id: 9, title: '09. විනාඩි 10ක් Reminder වැදුනු පසු', desc: 'ℹ️ Reminder Auto-Stopped: (#110) INTCUSDT සඳහා විනාඩි 10 ක් සම්පූර්ණ වූ බැවින්...' },
+              { id: 10, title: '10. 3 වරකට වඩා Loss වූ විට', desc: '🚫 MAX LOSS REACHED (BLACKLISTED)! 🔴 (Auto Replacement)' },
+            ].map((al) => (
+              <button
+                key={al.id}
+                onClick={async () => {
+                  try {
+                    await fetch(`/api/test/alerts/${al.id}?chatId=${selectedChatId}`);
+                    if (currentUser) {
+                      triggerTestCommand(`/status`);
+                    }
+                  } catch (e) {
+                    console.error(e);
+                  }
+                }}
+                className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-slate-800 hover:border-slate-700 rounded-lg text-left transition-all flex items-start gap-2.5 group"
+              >
+                <span className="px-1.5 py-0.5 bg-slate-800 text-white font-mono text-[10px] font-bold rounded mt-0.5 shrink-0">
+                  {al.id < 10 ? `0${al.id}` : al.id}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-bold text-slate-200 group-hover:text-white truncate">
+                    {al.title}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-0.5 truncate">
+                    {al.desc}
+                  </div>
                 </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
-                  Coin, Direction, Target Tp (full), Stop Loss, Margin
-                </div>
-              </div>
-            </button>
-
-            {/* 02. Loss Trade Signal */}
-            <button
-              onClick={() => triggerTestCommand('/test_signal SOL loss')}
-              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-amber-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
-            >
-              <span className="px-1.5 py-0.5 bg-amber-950 text-amber-400 border border-amber-800 text-[10px] font-bold rounded mt-0.5">02</span>
-              <div>
-                <div className="text-xs font-bold text-amber-300 group-hover:text-amber-200">
-                  Loss Trade එකක් සදහා
-                </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
-                  Coin, Direction, Target Tp (full), Stop Loss, Margin
-                </div>
-              </div>
-            </button>
-
-            {/* 03. Stop Loss to Entry Point */}
-            <button
-              onClick={() => triggerTestCommand('/be')}
-              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-blue-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
-            >
-              <span className="px-1.5 py-0.5 bg-blue-950 text-blue-400 border border-blue-800 text-[10px] font-bold rounded mt-0.5">03</span>
-              <div>
-                <div className="text-xs font-bold text-blue-300 group-hover:text-blue-200">
-                  Stop Loss එක Entry Point එකට ගන්න
-                </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
-                  Coin, Entry Price, "Stop Loss එක ඉහත අගයට වෙනස් කරන්න"
-                </div>
-              </div>
-            </button>
-
-            {/* 04. Time Expired Alert */}
-            <button
-              onClick={() => triggerTestCommand('/timeout')}
-              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-orange-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
-            >
-              <span className="px-1.5 py-0.5 bg-orange-950 text-orange-400 border border-orange-800 text-[10px] font-bold rounded mt-0.5">04</span>
-              <div>
-                <div className="text-xs font-bold text-orange-300 group-hover:text-orange-200">
-                  ලබාදී ඇති කාලය අවසන් වූ විට
-                </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
-                  Coin, "කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න."
-                </div>
-              </div>
-            </button>
-
-            {/* 05. Copy Signal */}
-            <button
-              onClick={() => triggerTestCommand('/copy')}
-              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-purple-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
-            >
-              <span className="px-1.5 py-0.5 bg-purple-950 text-purple-400 border border-purple-800 text-[10px] font-bold rounded mt-0.5">05</span>
-              <div>
-                <div className="text-xs font-bold text-purple-300 group-hover:text-purple-200">
-                  Coin, TP, SL අගයන් එක පාරින් Copy
-                </div>
-                <div className="text-[11px] text-slate-400 mt-0.5">
-                  Single-tap code block & copy button for immediate clipboard use
-                </div>
-              </div>
-            </button>
+              </button>
+            ))}
           </div>
         </div>
 

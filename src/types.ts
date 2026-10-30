@@ -47,6 +47,7 @@ export interface UserPosition {
   be_alert_sent?: boolean; // True once Breakeven message sent when base TP is reached
   duration_mins?: number; // Allocated trade time in minutes (e.g. 60m)
   timeout_alert_sent?: boolean; // True once time expired message is sent
+  reminders_auto_stopped?: boolean; // True once 10 min reminder auto-stopped alert is sent
   pnl?: number;
   pnl_pct?: number;
   closed_at?: number;
