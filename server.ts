@@ -1117,14 +1117,11 @@ function sendSignalReminderAlert(pos: UserPosition, reminderIndex: number): Tele
     is_from_bot: true,
     text: `⏰ <b>SIGNAL REMINDER (#${pos.signal_num}) [${reminderIndex}/10] 🔔</b>\n\n` +
       `📍 Coin: <code>${pos.symbol}</code> | Side: <b>${pos.side}</b>\n` +
-      `💵 Price: <code>${formatPrice(pos.current_price)}</code>\n` +
-      `🎯 TP: <code>${tpStr}</code> | 🛑 SL: <code>${slStr}</code>\n\n` +
-      `<code>${pos.symbol} TP: ${tpStr} SL: ${slStr}</code>\n\n` +
+      `💵 Price: <code>${formatPrice(pos.current_price)}</code>\n\n` +
       `👉 මෙම Alert එක නවතාලීමට පහත බොත්තම ඔබන්න හෝ /ok ලෙස Type කරන්න.`,
     buttons: [
       [
         { text: '🛑 Stop Reminder (/ok)', callback_data: `mute:${pos.signal_num}` },
-        { text: '📋 Copy Signal', callback_data: `copy:${pos.signal_num}` },
       ],
     ],
   };
@@ -1305,9 +1302,7 @@ function dispatchTradeToUsers(
       `🛑 Target SL: <code>${slStr}</code>\n` +
       `📈 Recovering Loss: $${pendingLossToAdd.toFixed(4)}\n` +
       `📊 Remaining Pool: $${u.global_loss_pool.toFixed(4)}\n\n` +
-      `💡 Alert නතර කිරීමට පහත බොත්තම ඔබන්න.\n\n` +
-      `📋 <b>Tap to Copy All:</b>\n` +
-      `<code>${copyBlock}</code>`;
+      `💡 Alert නතර කිරීමට පහත බොත්තම ඔබන්න.`;
 
     const dispatchMsg: TelegramMessage = {
       id: `sig-${Date.now()}-${u.chat_id}`,
@@ -1322,7 +1317,6 @@ function dispatchTradeToUsers(
           { text: '🚫 Skip & Refund', callback_data: `skip_trade:${sigNum}` },
         ],
         [
-          { text: '📋 Copy (Coin+TP+SL)', callback_data: `copy:${sigNum}` },
           { text: '📊 My Status', callback_data: 'my_status' },
         ],
       ],
