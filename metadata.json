@@ -1,0 +1,6 @@
+{
+  "name": "RedBull Loss Recovery Master Bot",
+  "description": "Multi-user Binance Futures algorithmic trading bot and loss recovery engine with Telegram controls, dynamic market scanner, and risk management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
