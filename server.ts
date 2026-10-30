@@ -1107,6 +1107,8 @@ function sendTimeoutAlert(pos: UserPosition): TelegramMessage {
 
 // --- ⏰ 08. Periodic Signal Reminder Alert (from screenshot) ---
 function sendSignalReminderAlert(pos: UserPosition, reminderIndex: number): TelegramMessage {
+  const tpStr = formatPrice(pos.tp_price);
+  const slStr = formatPrice(pos.sl_price);
   const reminderMsg: TelegramMessage = {
     id: `rem-${Date.now()}-${pos.id}-${reminderIndex}`,
     timestamp: new Date().toLocaleTimeString(),
@@ -1114,12 +1116,15 @@ function sendSignalReminderAlert(pos: UserPosition, reminderIndex: number): Tele
     sender_name: 'RedBull Master Bot',
     is_from_bot: true,
     text: `⏰ <b>SIGNAL REMINDER (#${pos.signal_num}) [${reminderIndex}/10] 🔔</b>\n\n` +
-      `📍 <b>Coin:</b> ${pos.symbol} | <b>Side:</b> ${pos.side}\n` +
-      `💵 <b>Price:</b> ${formatPrice(pos.current_price)}\n\n` +
+      `📍 Coin: <code>${pos.symbol}</code> | Side: <b>${pos.side}</b>\n` +
+      `💵 Price: <code>${formatPrice(pos.current_price)}</code>\n` +
+      `🎯 TP: <code>${tpStr}</code> | 🛑 SL: <code>${slStr}</code>\n\n` +
+      `<code>${pos.symbol} TP: ${tpStr} SL: ${slStr}</code>\n\n` +
       `👉 මෙම Alert එක නවතාලීමට පහත බොත්තම ඔබන්න හෝ /ok ලෙස Type කරන්න.`,
     buttons: [
       [
         { text: '🛑 Stop Reminder (/ok)', callback_data: `mute:${pos.signal_num}` },
+        { text: '📋 Copy Signal', callback_data: `copy:${pos.signal_num}` },
       ],
     ],
   };
@@ -1294,13 +1299,14 @@ function dispatchTradeToUsers(
 
     const alertText = 
       `🔔 <b>NEW TRADING SIGNAL #${sigNum} 🚨 [${modeTag}]</b>\n\n` +
-      `📍 Coin: <b>${symbol}</b> | Direction: <b>${side}</b>\n` +
+      `📍 Coin: <code>${symbol}</code> | Direction: <b>${side}</b>\n` +
       `💵 Margin: $${margin.toFixed(2)} | Leverage: ${leverage}x\n` +
-      `🎯 Target TP: ${targetTpStr}\n` +
-      `🛑 Target SL: ${slStr}\n` +
+      `🎯 Target TP: <code>${targetTpStr}</code>\n` +
+      `🛑 Target SL: <code>${slStr}</code>\n` +
       `📈 Recovering Loss: $${pendingLossToAdd.toFixed(4)}\n` +
       `📊 Remaining Pool: $${u.global_loss_pool.toFixed(4)}\n\n` +
       `💡 Alert නතර කිරීමට පහත බොත්තම ඔබන්න.\n\n` +
+      `📋 <b>Tap to Copy All:</b>\n` +
       `<code>${copyBlock}</code>`;
 
     const dispatchMsg: TelegramMessage = {
@@ -1316,6 +1322,7 @@ function dispatchTradeToUsers(
           { text: '🚫 Skip & Refund', callback_data: `skip_trade:${sigNum}` },
         ],
         [
+          { text: '📋 Copy (Coin+TP+SL)', callback_data: `copy:${sigNum}` },
           { text: '📊 My Status', callback_data: 'my_status' },
         ],
       ],
@@ -2301,10 +2308,16 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       if (!pos) {
         replyText = '⚠️ <b>ක්‍රියාකාරී Position එකක් හමු නොවීය.</b> Usage: <code>/copy &lt;coin or signal_num&gt;</code>';
       } else {
-        const copyBlock = `${pos.symbol} TP: ${pos.tp_price.toFixed(4)} SL: ${pos.sl_price.toFixed(4)}`;
-        replyText = `📋 <b>QUICK COPY (Coin + TP + SL):</b>\n\n` +
+        const tpVal = formatPrice(pos.tp_price);
+        const slVal = formatPrice(pos.sl_price);
+        const copyBlock = `${pos.symbol} TP: ${tpVal} SL: ${slVal}`;
+        replyText = `📋 <b>QUICK TAP-TO-COPY (Signal #${pos.signal_num}):</b>\n\n` +
+          `📍 Coin: <code>${pos.symbol}</code>\n` +
+          `🎯 TP: <code>${tpVal}</code>\n` +
+          `🛑 SL: <code>${slVal}</code>\n\n` +
+          `📋 <b>Full Copy:</b>\n` +
           `<code>${copyBlock}</code>\n\n` +
-          `<i>👆 ඉහත code කොටුව මත tap කර සම්පූර්ණ අගයන් එකවර කොපි කරගන්න.</i>`;
+          `<i>👆 ඉහත ඕනෑම අගයක් මත tap කර clipboard එකට copy කරගන්න.</i>`;
       }
       break;
     }
@@ -2481,16 +2494,22 @@ function handleCallbackQuery(chatId: string, data: string): { success: boolean; 
     const sig = parseInt(data.split(':')[1], 10);
     const pos = positions.find((p) => p.signal_num === sig);
     if (pos) {
-      const copyStr = `${pos.symbol} TP: ${pos.tp_price.toFixed(4)} SL: ${pos.sl_price.toFixed(4)}`;
+      const tpVal = formatPrice(pos.tp_price);
+      const slVal = formatPrice(pos.sl_price);
+      const copyStr = `${pos.symbol} TP: ${tpVal} SL: ${slVal}`;
       broadcastTelegramAlert({
         id: `cb-${Date.now()}`,
         timestamp: new Date().toLocaleTimeString(),
         chat_id: chatId,
         sender_name: 'RedBull Master Bot',
         is_from_bot: true,
-        text: `📋 <b>SIGNAL DETAILS COPIED:</b>\n\n` +
+        text: `📋 <b>SINGLE-TAP QUICK COPY (Signal #${pos.signal_num}):</b>\n\n` +
+          `📍 Coin: <code>${pos.symbol}</code>\n` +
+          `🎯 TP: <code>${tpVal}</code>\n` +
+          `🛑 SL: <code>${slVal}</code>\n\n` +
+          `📋 <b>Full Copy:</b>\n` +
           `<code>${copyStr}</code>\n\n` +
-          `<i>👆 ඉහත code කොටුව මත tap කර Coin, TP, SL එකවර කොපි කරගන්න.</i>`,
+          `<i>👆 ඉහත ඕනෑම අගයක් මත tap කර Clipboard එකට ක්ෂණිකව Copy කරගන්න.</i>`,
       });
       return { success: true, message: 'Copy block sent' };
     }
