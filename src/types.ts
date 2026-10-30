@@ -66,6 +66,11 @@ export interface BotConfig {
   admin_chat_id: string;
   binance_connected: boolean;
   binance_key_preview: string;
+  // Telegram Bot integration
+  telegram_bot_token?: string;
+  telegram_connected?: boolean;
+  telegram_bot_username?: string;
+  auto_approve_users?: boolean;
   // Ichimoku Itto configurations
   ichimoku_preset: 'Crypto' | 'Classic' | '5-Day Week';
   strong_cut_threshold: number; // default 4

@@ -7,7 +7,10 @@ import {
   Save, 
   CheckCircle2, 
   Activity,
-  Layers
+  Layers,
+  Send,
+  Bot,
+  Radio
 } from 'lucide-react';
 import { BotConfig } from '../types';
 
@@ -39,6 +42,13 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
     config?.kijun_slope_len ?? 5
   );
 
+  // Telegram Bot configurations
+  const [telegramBotToken, setTelegramBotToken] = useState(config?.telegram_bot_token ?? '');
+  const [adminChatId, setAdminChatId] = useState(config?.admin_chat_id ?? '1088492011');
+  const [autoApproveUsers, setAutoApproveUsers] = useState(config?.auto_approve_users ?? true);
+  const [testingTelegram, setTestingTelegram] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
+
   const [savedSuccess, setSavedSuccess] = useState(false);
 
   const handleSave = (e: React.FormEvent) => {
@@ -52,9 +62,34 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
       strong_cut_threshold: Number(strongCutThreshold),
       chop_score_band: Number(chopScoreBand),
       kijun_slope_len: Number(kijunSlopeLen),
+      telegram_bot_token: telegramBotToken.trim(),
+      admin_chat_id: adminChatId.trim(),
+      auto_approve_users: Boolean(autoApproveUsers),
     });
     setSavedSuccess(true);
     setTimeout(() => setSavedSuccess(false), 3000);
+  };
+
+  const handleSendTestMessage = async () => {
+    setTestingTelegram(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/telegram/test-outbound', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId: adminChatId.trim() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTestResult(`✅ ${data.message || 'Test alert dispatched successfully!'}`);
+      } else {
+        setTestResult(`❌ Failed to send: ${data.error || 'Check bot token & chat ID'}`);
+      }
+    } catch (e: any) {
+      setTestResult(`❌ Network Error: ${e.message}`);
+    } finally {
+      setTestingTelegram(false);
+    }
   };
 
   return (
@@ -267,6 +302,108 @@ export const SettingsTab: React.FC<SettingsTabProps> = ({
               <p>
                 In Paper Trading mode, all market prices, technical indicators, and loss recovery mathematics run with live real-time Binance prices with zero financial risk.
               </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Telegram Bot Live Connection & Polling Engine */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Bot className="w-4 h-4 text-sky-400" />
+              <span>Telegram Bot Live Integration & Long Polling Engine</span>
+            </h3>
+            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 ${
+              config?.telegram_connected
+                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800'
+                : 'bg-amber-950 text-amber-400 border border-amber-800'
+            }`}>
+              <Radio className={`w-3 h-3 ${config?.telegram_connected ? 'animate-pulse text-emerald-400' : 'text-amber-400'}`} />
+              <span>
+                {config?.telegram_connected 
+                  ? `Connected (@${config.telegram_bot_username || 'Bot'})` 
+                  : 'Polling Ready / Enter Token'}
+              </span>
+            </span>
+          </div>
+
+          <div className="space-y-4 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-slate-300 font-medium mb-1.5">
+                  Telegram Bot Token:
+                </label>
+                <input
+                  type="password"
+                  placeholder="e.g. 123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+                  value={telegramBotToken}
+                  onChange={(e) => setTelegramBotToken(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white font-mono focus:outline-none focus:border-rose-500"
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  From @BotFather. Can also be set as <code>TELEGRAM_BOT_TOKEN</code> in Railway.
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-medium mb-1.5">
+                  Admin Chat ID:
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 1088492011"
+                  value={adminChatId}
+                  onChange={(e) => setAdminChatId(e.target.value)}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-white font-mono focus:outline-none focus:border-rose-500"
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Your personal Telegram numeric chat ID. Or type <code>/set_admin</code> in Telegram.
+                </span>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoApproveUsers}
+                  onChange={(e) => setAutoApproveUsers(e.target.checked)}
+                  className="rounded bg-slate-900 border-slate-700 text-rose-500 focus:ring-0"
+                />
+                <div>
+                  <span className="text-xs font-semibold text-slate-200">
+                    Auto-Approve New Telegram Members (Recommended)
+                  </span>
+                  <p className="text-[11px] text-slate-400">
+                    When enabled, any member who starts the bot with <code>/start</code> is automatically approved and active to immediately receive trading signals without waiting for manual authorization.
+                  </p>
+                </div>
+              </label>
+            </div>
+
+            {testResult && (
+              <div className={`p-3 rounded-lg text-xs font-semibold ${
+                testResult.startsWith('✅') 
+                  ? 'bg-emerald-950/60 border border-emerald-800 text-emerald-300' 
+                  : 'bg-rose-950/60 border border-rose-800 text-rose-300'
+              }`}>
+                {testResult}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <p className="text-[11px] text-slate-400">
+                ⚡ <b>Zero-Config Long Polling:</b> Commands like <code>/start</code>, <code>/status</code>, <code>/test_signal</code> work directly in Telegram without needing public webhooks.
+              </p>
+              <button
+                type="button"
+                onClick={handleSendTestMessage}
+                disabled={testingTelegram}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-all"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{testingTelegram ? 'Sending Test...' : 'Send Test Alert to Telegram'}</span>
+              </button>
             </div>
           </div>
         </div>

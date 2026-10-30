@@ -28,6 +28,10 @@ const initialBotConfig: BotConfig = {
   binance_key_preview: process.env.BINANCE_API_KEY 
     ? `...${process.env.BINANCE_API_KEY.slice(-4)}`
     : 'Paper Mode (No Key)',
+  telegram_bot_token: process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN || process.env.TG_TOKEN || process.env.TG_BOT_TOKEN || '',
+  telegram_connected: false,
+  telegram_bot_username: '',
+  auto_approve_users: true,
   ichimoku_preset: 'Crypto',
   strong_cut_threshold: 4,
   chop_score_band: 1,
@@ -862,63 +866,247 @@ function seedBaselineCoins() {
   }
 }
 
-// --- REAL TELEGRAM BOT DISPATCHER & BROADCAST HELPER ---
+// --- REAL TELEGRAM BOT ENGINE & POLLING SERVICE ---
+function getTelegramToken(): string | null {
+  return (
+    process.env.TELEGRAM_TOKEN ||
+    process.env.TELEGRAM_BOT_TOKEN ||
+    process.env.BOT_TOKEN ||
+    process.env.TG_TOKEN ||
+    process.env.TG_BOT_TOKEN ||
+    botConfig.telegram_bot_token ||
+    null
+  );
+}
+
 function broadcastTelegramAlert(msg: TelegramMessage): void {
   // 1. Always record in in-memory list for Web Dashboard Simulator & Audit Log
   telegramMessages.unshift(msg);
 
-  // 2. If real Telegram Bot token is present in ENV, dispatch over Telegram Bot API
-  const token = process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN;
+  // 2. If real Telegram Bot token is present, dispatch over Telegram Bot API
+  const token = getTelegramToken();
   if (!token) {
+    console.log(`[Telegram Outbound] Simulator recorded alert for chat ${msg.chat_id} (No token configured).`);
+    return;
+  }
+
+  const sendPayload = (payload: any, isRetry = false) => {
+    try {
+      const dataStr = JSON.stringify(payload);
+      const req = https.request(
+        `https://api.telegram.org/bot${token}/sendMessage`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(dataStr),
+          },
+          timeout: 8000,
+        },
+        (res) => {
+          let body = '';
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            if (res.statusCode && res.statusCode >= 400) {
+              console.warn(`[Telegram API Error] HTTP ${res.statusCode} for chat ${msg.chat_id}: ${body}`);
+              // If parse mode error, retry as plain text without HTML
+              if (!isRetry && body.includes("can't parse entities")) {
+                const plainText = msg.text.replace(/<[^>]*>?/gm, '');
+                const retryPayload = { ...payload, text: plainText, parse_mode: undefined };
+                console.log(`[Telegram API Retry] Retrying plain text message for chat ${msg.chat_id}...`);
+                sendPayload(retryPayload, true);
+              }
+            } else {
+              console.log(`[Telegram API Success] Delivered message to chat ${msg.chat_id}`);
+            }
+          });
+        }
+      );
+
+      req.on('error', (err) => {
+        console.error(`[Telegram Outbound Error] Failed to send message to ${msg.chat_id}:`, err.message);
+      });
+
+      req.write(dataStr);
+      req.end();
+    } catch (err) {
+      console.error('[Telegram Broadcast Exception]:', err);
+    }
+  };
+
+  const payload: any = {
+    chat_id: msg.chat_id,
+    text: msg.text,
+    parse_mode: 'HTML',
+  };
+
+  if (msg.buttons && msg.buttons.length > 0) {
+    payload.reply_markup = {
+      inline_keyboard: msg.buttons.map((row) =>
+        row.map((btn) => ({
+          text: btn.text,
+          callback_data: btn.callback_data,
+        }))
+      ),
+    };
+  }
+
+  sendPayload(payload);
+}
+
+let telegramPollingActive = false;
+let lastUpdateId = 0;
+
+function processTelegramUpdate(update: any): void {
+  if (!update) return;
+
+  // Handle Callback Query (inline buttons)
+  if (update.callback_query) {
+    const cb = update.callback_query;
+    const cbData = cb.data || '';
+    const senderId = String(cb.from?.id || cb.message?.chat?.id || '');
+    handleCallbackQuery(senderId, cbData);
+
+    // Answer callback query so button spinner stops in Telegram app
+    const token = getTelegramToken();
+    if (token && cb.id) {
+      try {
+        const postData = JSON.stringify({ callback_query_id: cb.id });
+        const req = https.request(`https://api.telegram.org/bot${token}/answerCallbackQuery`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(postData),
+          },
+          timeout: 4000,
+        });
+        req.on('error', () => {});
+        req.write(postData);
+        req.end();
+      } catch (e) {}
+    }
+    return;
+  }
+
+  // Handle Regular Message
+  if (update.message) {
+    const msg = update.message;
+    const chatId = String(msg.chat?.id || '');
+    const text = msg.text || '';
+    const username = msg.from?.username || msg.chat?.username || 'user';
+    const fullName = [msg.from?.first_name, msg.from?.last_name].filter(Boolean).join(' ') || msg.chat?.first_name || 'Member';
+
+    if (text) {
+      // Record incoming user message in simulator
+      telegramMessages.unshift({
+        id: `usr-${Date.now()}-${chatId}`,
+        timestamp: new Date().toLocaleTimeString(),
+        chat_id: chatId,
+        sender_name: fullName,
+        is_from_bot: false,
+        text,
+      });
+
+      handleTelegramCommand(chatId, username, fullName, text);
+    }
+  }
+}
+
+async function initTelegramBotEngine(): Promise<void> {
+  const token = getTelegramToken();
+  if (!token) {
+    console.log('ℹ️ [Telegram Engine] No Telegram Bot Token configured. Webhook & Simulator active.');
     return;
   }
 
   try {
-    const payload: any = {
-      chat_id: msg.chat_id,
-      text: msg.text,
-      parse_mode: 'HTML',
-    };
+    // 1. Verify Bot Token and get bot identity
+    const meRes = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+    const meData: any = await meRes.json();
+    if (meData && meData.ok && meData.result) {
+      botConfig.telegram_connected = true;
+      botConfig.telegram_bot_username = meData.result.username;
+      console.log(`🤖 [Telegram Engine] Successfully connected as @${meData.result.username} (ID: ${meData.result.id}, Name: ${meData.result.first_name})`);
 
-    if (msg.buttons && msg.buttons.length > 0) {
-      payload.reply_markup = {
-        inline_keyboard: msg.buttons.map((row) =>
-          row.map((btn) => ({
-            text: btn.text,
-            callback_data: btn.callback_data,
-          }))
-        ),
-      };
-    }
-
-    const dataStr = JSON.stringify(payload);
-    const req = https.request(
-      `https://api.telegram.org/bot${token}/sendMessage`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(dataStr),
-        },
-        timeout: 6000,
-      },
-      (res) => {
-        if (res.statusCode && res.statusCode >= 400) {
-          console.warn(`[Telegram API warning] status code ${res.statusCode} for chat ${msg.chat_id}`);
-        }
+      // 2. Set bot commands menu in Telegram
+      try {
+        await fetch(`https://api.telegram.org/bot${token}/setMyCommands`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            commands: [
+              { command: 'start', description: 'Connect & register for signals' },
+              { command: 'status', description: 'View current trades & loss recovery' },
+              { command: 'positions', description: 'View active positions with PnL' },
+              { command: 'test_signal', description: 'Dispatch an immediate test trade signal' },
+              { command: 'whitelist', description: 'List whitelisted trading coins' },
+              { command: 'help', description: 'Show all bot commands and usage' },
+              { command: 'menu', description: 'Show main navigation menu' },
+              { command: 'bot_on', description: 'Admin: resume automatic scanner' },
+              { command: 'bot_off', description: 'Admin: pause automatic scanner' },
+              { command: 'users', description: 'Admin: view registered members' },
+              { command: 'approve_all', description: 'Admin: approve all users' },
+              { command: 'set_admin', description: 'Assign yourself as Admin' },
+            ],
+          }),
+        });
+      } catch (cmdErr) {
+        // non-blocking
       }
-    );
 
-    req.on('error', (err) => {
-      console.error(`[Telegram Real Outbound Error] Failed to send message to ${msg.chat_id}:`, err.message);
-    });
+      // 3. Clear conflicting webhooks so getUpdates long polling runs smoothly
+      try {
+        await fetch(`https://api.telegram.org/bot${token}/deleteWebhook?drop_pending_updates=false`);
+        console.log('🤖 [Telegram Engine] Cleared conflicting webhooks, enabling high-performance Long Polling.');
+      } catch (e) {}
 
-    req.write(dataStr);
-    req.end();
-  } catch (err) {
-    console.error('[Telegram Broadcast Exception]:', err);
+      // 4. Start Long Polling loop
+      startTelegramPolling(token);
+    } else {
+      console.warn('⚠️ [Telegram Engine] Invalid Bot Token response:', meData);
+    }
+  } catch (err: any) {
+    console.error('❌ [Telegram Engine] Initialization error:', err.message);
   }
 }
+
+function startTelegramPolling(token: string) {
+  if (telegramPollingActive) return;
+  telegramPollingActive = true;
+
+  (async () => {
+    console.log('🚀 [Telegram Engine] Long Polling started. Listening for messages & commands in real-time...');
+    while (telegramPollingActive) {
+      try {
+        const url = `https://api.telegram.org/bot${token}/getUpdates?offset=${lastUpdateId + 1}&timeout=20`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(28000) });
+        if (!res.ok) {
+          if (res.status === 409) {
+            console.warn('[Telegram Polling] 409 Conflict: waiting 5s before reconnecting...');
+            await new Promise((r) => setTimeout(r, 5000));
+            continue;
+          }
+          await new Promise((r) => setTimeout(r, 4000));
+          continue;
+        }
+
+        const data: any = await res.json();
+        if (data && data.ok && Array.isArray(data.result)) {
+          for (const update of data.result) {
+            if (update.update_id) {
+              lastUpdateId = Math.max(lastUpdateId, update.update_id);
+            }
+            processTelegramUpdate(update);
+          }
+        }
+      } catch (pollErr: any) {
+        // Timeout or network blip - continue looping smoothly
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
+  })();
+}
+
 
 // --- CORE DISPATCHER & RISK RECOVERY ENGINE (from main.py) ---
 
@@ -1105,15 +1293,17 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
 
   // Ensure user exists or auto-register
   let user = users.get(chatId);
+  const isTargetAdmin = chatId === botConfig.admin_chat_id || (isAdmin && user?.is_admin === 1);
+  const shouldAutoApprove = botConfig.auto_approve_users !== false || isTargetAdmin;
+
   if (!user) {
-    const isFirstUser = users.size === 0 || isAdmin;
     user = {
       chat_id: chatId,
       full_name: fullName || 'New Member',
       username: username || 'user',
-      is_approved: isFirstUser ? 1 : 0,
-      is_active: isFirstUser ? 1 : 0,
-      is_admin: isFirstUser ? 1 : 0,
+      is_approved: shouldAutoApprove ? 1 : 0,
+      is_active: shouldAutoApprove ? 1 : 0,
+      is_admin: isTargetAdmin ? 1 : 0,
       base_margin: 0.8,
       leverage: 10,
       margin_sl_pct: 27.0,
@@ -1133,9 +1323,16 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       last_interaction: new Date().toISOString(),
     };
     users.set(chatId, user);
+  } else {
+    user.last_interaction = new Date().toISOString();
+    if (fullName) user.full_name = fullName;
+    if (username) user.username = username;
+    if (isTargetAdmin) user.is_admin = 1;
+    if (shouldAutoApprove && user.is_approved === 0) {
+      user.is_approved = 1;
+      user.is_active = 1;
+    }
   }
-
-  user.last_interaction = new Date().toISOString();
 
   let replyText = '';
   let buttons: { text: string; callback_data: string }[][] | undefined = undefined;
@@ -1146,25 +1343,26 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
         replyText = `👑 <b>ආයුබෝවන් Administrator!</b>\n\n` +
           `RedBull Loss Recovery Master Bot කළමනාකරණ පද්ධතියට ඔබව සාදරයෙන් පිළිගනිමු.\n\n` +
           `🛠 <b>ප්‍රධාන Commands:</b>\n` +
-          `/status - සම්පූර්ණ පද්ධති තත්වය\n` +
-          `/bot_on - Bot ක්‍රියාත්මක කිරීම\n` +
-          `/bot_off - Bot Pause කිරීම\n` +
-          `/users - සියලු සාමාජිකයින් ලැයිස්තුව\n` +
-          `/coin_stats - කාසි පිළිබඳ විස්තර\n` +
-          `/menu - සියලු controls`;
-      } else if (user.is_approved === 1) {
-        replyText = `🎉 <b>ආයුබෝවන් ${user.full_name}!</b>\n\n` +
-          `ඔබගේ ගිණුම සාර්ථකව ක්‍රියාත්මකයි. ඔබට ස්වයංක්‍රීයව Trading Signals ලැබෙනු ඇත.\n\n` +
-          `📌 <b>ඔබේ Commands:</b>\n` +
-          `/status - ඔබගේ active trades සහ loss recovery තත්වය\n` +
-          `/my_time - පුද්ගලික trading window සැකසීම\n` +
-          `/my_off - Signals pause කිරීම\n` +
-          `/my_on - Signals නැවත ආරම්භ කිරීම`;
+          `• <b>/status</b> - පද්ධති තත්වය සහ Open Trades\n` +
+          `• <b>/test_signal</b> - ක්ෂණික Test Signal එකක් නිකුත් කිරීම\n` +
+          `• <b>/positions</b> - සියලු Active Positions\n` +
+          `• <b>/whitelist</b> - අනුමත කාසි ලැයිස්තුව\n` +
+          `• <b>/bot_on</b> / <b>/bot_off</b> - Scanner Master Switch\n` +
+          `• <b>/users</b> - සියලු සාමාජිකයින් ලැයිස්තුව\n` +
+          `• <b>/menu</b> - සියලු Controls`;
       } else {
-        replyText = `👋 <b>ආයුබෝවන් ${fullName}!</b>\n\n` +
-          `RedBull Multi-User Loss Recovery Bot වෙත ඔබගේ ඉල්ලීම යොමු විය.\n` +
-          `⏳ <b>පරිපාලක (Admin) අනුමැතිය ලැබෙන තෙක් රැඳී සිටින්න.</b>\n` +
-          `ඔබගේ Chat ID: <code>${chatId}</code>`;
+        replyText = `🎉 <b>ආයුබෝවන් ${user.full_name}!</b>\n\n` +
+          `RedBull Multi-User Loss Recovery Bot වෙත සාදරයෙන් පිළිගනිමු! ඔබගේ ගිණුම සාර්ථකව සම්බන්ධ කර active කරන ලදී.\n\n` +
+          `✅ <b>තත්වය:</b> APPROVED & ACTIVE 🟢\n` +
+          `💎 <b>Margin:</b> $${user.base_margin.toFixed(2)} (${user.leverage}x Leverage)\n` +
+          `🛡️ <b>Binance Min Notional Guard:</b> Active ($5.00+ Floor)\n\n` +
+          `📌 <b>ඔබේ Commands:</b>\n` +
+          `• <b>/status</b> - ඔබගේ active trades සහ recovery pool තත්වය\n` +
+          `• <b>/positions</b> - ඔබගේ open trades ලැයිස්තුව\n` +
+          `• <b>/test_signal</b> - Test Signal එකක් ලබාගැනීම\n` +
+          `• <b>/my_off</b> - Signals තාවකාලිකව pause කිරීම\n` +
+          `• <b>/my_on</b> - Signals නැවත ආරම්භ කිරීම\n` +
+          `• <b>/help</b> - සියලු විධාන විස්තර`;
       }
       break;
 
@@ -1305,6 +1503,9 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
     case 'menu':
       replyText = `📋 <b>REDBULL MASTER BOT MENU</b>\n\n` +
         `• <b>/status</b> - Current open positions & PnL\n` +
+        `• <b>/positions</b> - View all active trades\n` +
+        `• <b>/test_signal</b> - Test trade dispatch alert\n` +
+        `• <b>/whitelist</b> - View supported coins\n` +
         `• <b>/my_on</b> / <b>/my_off</b> - Pause or resume signals\n` +
         `• <b>/skip &lt;num&gt;</b> - Cancel trade & refund attached loss\n` +
         (isAdmin
@@ -1312,13 +1513,115 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
             `• /bot_on & /bot_off - Master toggle\n` +
             `• /users - Manage members\n` +
             `• /approve &lt;id&gt; - Approve new member\n` +
+            `• /approve_all - Approve all pending members\n` +
             `• /toggle_paper - Switch paper / live trading\n` +
+            `• /set_admin - Set yourself as Admin\n` +
             `• /coin_stats - Whitelist overview`
-          : '');
+          : `\n<i>Need admin access? Send /set_admin</i>`);
       break;
 
+    case 'positions':
+    case 'trades': {
+      const active = positions.filter((p) => p.is_open === 1 && (user.is_admin === 1 || p.chat_id === chatId));
+      if (active.length === 0) {
+        replyText = `💼 <b>NO OPEN POSITIONS</b>\n\nදැනට කිසිදු active trade එකක් නොමැත. නව Ichimoku signal එකක් ලැබුණු වහාම alert එකක් ලැබෙනු ඇත.`;
+      } else {
+        const list = active.map((p) => {
+          const m = marketCache.get(p.symbol);
+          const cur = m?.price || p.current_price;
+          const pnlPct = p.side === 'BUY' 
+            ? ((cur - p.entry_price) / p.entry_price) * p.leverage * 100 
+            : ((p.entry_price - cur) / p.entry_price) * p.leverage * 100;
+          const pnlSign = pnlPct >= 0 ? '🟢 +' : '🔴 ';
+          return `• <b>${p.symbol}</b> (${p.side} ${p.leverage}x)\n` +
+            `  Entry: $${p.entry_price.toFixed(4)} | Cur: $${cur.toFixed(4)}\n` +
+            `  TP: $${p.tp_price.toFixed(4)} | SL: $${p.sl_price.toFixed(4)}\n` +
+            `  PnL: ${pnlSign}${pnlPct.toFixed(2)}% | User: ${p.user_name || p.chat_id}`;
+        }).join('\n\n');
+        replyText = `💼 <b>ACTIVE POSITIONS (${active.length}):</b>\n\n${list}`;
+      }
+      break;
+    }
+
+    case 'test_signal':
+    case 'signal':
+    case 'test': {
+      const testSym = tokens[1] ? (tokens[1].toUpperCase().endsWith('USDT') ? tokens[1].toUpperCase() : `${tokens[1].toUpperCase()}USDT`) : 'DOGEUSDT';
+      const testSide = tokens[2] && tokens[2].toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+      const m = marketCache.get(testSym);
+      const testPrice = m?.price || (testSym === 'DOGEUSDT' ? 0.165 : 1.25);
+
+      const res = dispatchTradeToUsers(testSym, testSide, testPrice);
+      if (res.success) {
+        replyText = `🚀 <b>TEST SIGNAL DISPATCHED!</b>\n\n` +
+          `🪙 Coin: <b>${testSym}</b> (${testSide})\n` +
+          `💵 Price: $${testPrice}\n` +
+          `👥 Dispatched to <b>${res.dispatchedCount} active user(s)</b>.\n\n` +
+          `<i>Check Telegram for the trade signal alert with TP/SL and Breakeven trigger!</i>`;
+      } else {
+        replyText = `⚠️ <b>Signal Dispatch Result:</b> ${res.message}`;
+      }
+      break;
+    }
+
+    case 'whitelist':
+    case 'coins': {
+      const coins = Array.from(whitelist).join(', ');
+      replyText = `🪙 <b>WHITELISTED COINS (${whitelist.size}):</b>\n\n<code>${coins}</code>\n\n` +
+        `<i>All coins are pre-verified for Binance Futures $5.00 min notional on $0.80-$1.00 margin.</i>`;
+      break;
+    }
+
+    case 'approve_all': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else {
+        let count = 0;
+        for (const [, u] of users.entries()) {
+          if (u.is_approved !== 1 || u.is_active !== 1) {
+            u.is_approved = 1;
+            u.is_active = 1;
+            count++;
+          }
+        }
+        replyText = `✅ <b>සියලු පරිශීලකයින් (${count} members) සාර්ථකව Approve කර Active කරන ලදී!</b>`;
+      }
+      break;
+    }
+
+    case 'set_admin':
+    case 'make_admin': {
+      botConfig.admin_chat_id = chatId;
+      user.is_admin = 1;
+      user.is_approved = 1;
+      user.is_active = 1;
+      replyText = `👑 <b>SUCCESS!</b>\n\nඔබගේ Chat ID (<code>${chatId}</code>) පද්ධතියේ ප්‍රධාන <b>Admin</b> ලෙස නම් කරන ලදී. ඔබට දැන් සියලු පරිපාලක commands ක්‍රියාත්මක කල හැක!`;
+      break;
+    }
+
+    case 'help': {
+      replyText = `📖 <b>REDBULL LOSS RECOVERY MASTER BOT HELP</b>\n\n` +
+        `🟢 <b>සාමාන්‍ය Commands:</b>\n` +
+        `• <b>/start</b> - Bot වෙත සම්බන්ධ වීම සහ ලියාපදිංචිය\n` +
+        `• <b>/status</b> - ඔබගේ open trades සහ loss recovery තත්වය\n` +
+        `• <b>/positions</b> - ඔබගේ සියලු සක්‍රිය trades ලැයිස්තුව\n` +
+        `• <b>/whitelist</b> - අනුමත කාසි ලැයිස්තුව\n` +
+        `• <b>/test_signal</b> - Test Signal එකක් trigger කර Telegram වෙත යැවීම\n` +
+        `• <b>/my_off</b> - Trade signals තාවකාලිකව pause කිරීම\n` +
+        `• <b>/my_on</b> - Trade signals නැවත ආරම්භ කිරීම\n` +
+        `• <b>/skip &lt;id&gt;</b> - Trade එක cancel කර loss එක refund කිරීම\n\n` +
+        `👑 <b>Admin Commands:</b>\n` +
+        `• <b>/bot_on</b> / <b>/bot_off</b> - Scanner master switch\n` +
+        `• <b>/users</b> - සියලු users ලැයිස්තුව\n` +
+        `• <b>/approve &lt;id&gt;</b> - User කෙනෙක් approve කිරීම\n` +
+        `• <b>/approve_all</b> - සියලු users approve කිරීම\n` +
+        `• <b>/set_admin</b> - ඔබව Admin ලෙස පත් කරගැනීම\n` +
+        `• <b>/toggle_paper</b> - Paper / Real trading මාරු කිරීම`;
+      break;
+    }
+
     default:
-      replyText = `ℹ️ නොදන්නා විධානයකි. සියලු commands බැලීමට <b>/menu</b> හෝ <b>/status</b> ලබාදෙන්න.`;
+      replyText = `ℹ️ නොදන්නා විධානයකි. සියලු commands බැලීමට <b>/menu</b> හෝ <b>/help</b> ලබාදෙන්න.`;
       break;
   }
 
@@ -1609,9 +1912,15 @@ async function startServer() {
 
   app.use(express.json());
 
-  // Fetch initial market data & sync live 5m Klines
-  await fetchBinancePrices();
-  await syncWhitelist5mKlines().catch(() => {});
+  // Graceful shutdown handling for container platforms like Railway
+  process.on('SIGTERM', () => {
+    console.log('Received SIGTERM signal, exiting cleanly...');
+    process.exit(0);
+  });
+  process.on('SIGINT', () => {
+    console.log('Received SIGINT signal, exiting cleanly...');
+    process.exit(0);
+  });
 
   // Background ticker & monitor interval (every 3 seconds)
   setInterval(() => {
@@ -1634,9 +1943,13 @@ async function startServer() {
   }, 20000);
 
   // --- HEALTH & REPO SIGNATURE ENDPOINTS ---
-  app.get(['/', '/health'], (req: Request, res: Response, next) => {
-    // If request accepts HTML and is not explicitly health, allow Vite to handle
-    if (req.path === '/' && req.headers.accept?.includes('text/html')) {
+  app.get(['/health', '/api/health'], (req: Request, res: Response) => {
+    res.status(200).send('RedBull Loss Recovery Master Bot (Multi-User Engine) Live!');
+  });
+
+  app.get('/', (req: Request, res: Response, next) => {
+    // If request accepts HTML, allow Vite/Static dashboard to handle
+    if (req.headers.accept?.includes('text/html')) {
       return next();
     }
     res.status(200).send('RedBull Loss Recovery Master Bot (Multi-User Engine) Live!');
@@ -1737,7 +2050,10 @@ async function startServer() {
       ichimoku_preset,
       strong_cut_threshold,
       chop_score_band,
-      kijun_slope_len
+      kijun_slope_len,
+      telegram_bot_token,
+      admin_chat_id,
+      auto_approve_users
     } = req.body;
     if (typeof is_paused === 'boolean') botConfig.is_paused = is_paused;
     if (typeof paper_trading === 'boolean') botConfig.paper_trading = paper_trading;
@@ -1751,8 +2067,58 @@ async function startServer() {
     if (typeof strong_cut_threshold === 'number') botConfig.strong_cut_threshold = strong_cut_threshold;
     if (typeof chop_score_band === 'number') botConfig.chop_score_band = chop_score_band;
     if (typeof kijun_slope_len === 'number') botConfig.kijun_slope_len = kijun_slope_len;
+    if (typeof admin_chat_id === 'string' && admin_chat_id.trim()) {
+      botConfig.admin_chat_id = admin_chat_id.trim();
+    }
+    if (typeof auto_approve_users === 'boolean') {
+      botConfig.auto_approve_users = auto_approve_users;
+    }
+    if (typeof telegram_bot_token === 'string' && telegram_bot_token.trim()) {
+      botConfig.telegram_bot_token = telegram_bot_token.trim();
+      telegramPollingActive = false; // Trigger reload of polling loop
+      setTimeout(() => {
+        initTelegramBotEngine().catch((err) => {
+          console.warn('[Telegram Re-init Warning]:', err.message);
+        });
+      }, 500);
+    }
 
     res.json({ success: true, config: botConfig });
+  });
+
+  // Outbound Telegram message test trigger from dashboard
+  app.post('/api/telegram/test-outbound', (req: Request, res: Response) => {
+    const { chatId } = req.body;
+    const targetChat = chatId || botConfig.admin_chat_id;
+    const token = getTelegramToken();
+    const testMsg: TelegramMessage = {
+      id: `test-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString(),
+      chat_id: targetChat,
+      sender_name: 'RedBull Master Bot',
+      is_from_bot: true,
+      text: `🔔 <b>REDBULL BOT TELEGRAM CONNECTIVITY TEST!</b>\n\n` +
+        `✅ Telegram Bot සම්බන්ධතාවය සහ Outbound Dispatches සාර්ථකව ක්‍රියාත්මකයි!\n` +
+        `⚡ RedBull Loss Recovery Engine එකෙන් Trading Signals ලැබීමට ඔබගේ ගිණුම සූදානම්.\n\n` +
+        `• Chat ID: <code>${targetChat}</code>\n` +
+        `• Mode: ${botConfig.paper_trading ? 'Paper Trading' : 'Live Binance'}\n\n` +
+        `විධාන පරීක්ෂා කිරීමට <b>/status</b> හෝ <b>/test_signal</b> යවන්න.`,
+      buttons: [
+        [
+          { text: '📊 My Status', callback_data: 'my_status' },
+          { text: '🚀 Test Signal', callback_data: 'skip:0' },
+        ],
+      ],
+    };
+
+    broadcastTelegramAlert(testMsg);
+    res.json({
+      success: true,
+      hasToken: Boolean(token),
+      targetChat,
+      message: `Test alert dispatched to chat ${targetChat}`,
+      sentMessage: testMsg,
+    });
   });
 
   // 3. User Management
@@ -2036,6 +2402,15 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 RedBull Loss Recovery Master Server listening at http://0.0.0.0:${PORT}`);
+
+    // Start Telegram Bot Long Polling engine
+    initTelegramBotEngine().catch((err) => {
+      console.warn('⚠️ [Telegram Engine Startup Warning]:', err.message);
+    });
+
+    // Start background Binance price fetching & 5m Kline calculations
+    fetchBinancePrices().catch(() => {});
+    syncWhitelist5mKlines().catch(() => {});
   });
 }
 

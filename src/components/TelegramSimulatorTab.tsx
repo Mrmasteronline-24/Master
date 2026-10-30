@@ -39,14 +39,17 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
 
   const quickCommands = [
     { label: '/status', cmd: '/status', desc: 'Current trades & loss pool' },
-    { label: '/menu', cmd: '/menu', desc: 'Command guide' },
+    { label: '/test_signal', cmd: '/test_signal', desc: 'Dispatch immediate test signal' },
+    { label: '/positions', cmd: '/positions', desc: 'Active trades list' },
+    { label: '/whitelist', cmd: '/whitelist', desc: 'Whitelisted coins' },
+    { label: '/help', cmd: '/help', desc: 'Full command guide' },
     { label: '/start', cmd: '/start', desc: 'User registration' },
     { label: '/my_off', cmd: '/my_off', desc: 'Pause personal signals' },
     { label: '/my_on', cmd: '/my_on', desc: 'Resume personal signals' },
     { label: '/bot_on', cmd: '/bot_on', desc: 'Admin: Start bot' },
     { label: '/bot_off', cmd: '/bot_off', desc: 'Admin: Pause bot' },
     { label: '/users', cmd: '/users', desc: 'Admin: Member list' },
-    { label: '/toggle_paper', cmd: '/toggle_paper', desc: 'Admin: Switch live/paper' },
+    { label: '/approve_all', cmd: '/approve_all', desc: 'Admin: Approve all users' },
   ];
 
   const handleSend = (e?: React.FormEvent) => {
