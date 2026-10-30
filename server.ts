@@ -74,6 +74,14 @@ const SYMBOL_NOTIONAL_REQUIREMENTS: Record<string, { minNotional: number; minMar
   AAVEUSDT: { minNotional: 16.0, minMargin10x: 1.6, reason: 'High unit price & 0.1 lot step' },
 };
 
+function formatPrice(val: number): string {
+  if (isNaN(val) || val === undefined || val === null) return '0.00';
+  if (val >= 100) return val.toFixed(2);
+  if (val >= 1) return val.toFixed(4);
+  if (val >= 0.01) return val.toFixed(5);
+  return val.toFixed(6);
+}
+
 function getSymbolMinNotional(symbol: string): number {
   return SYMBOL_NOTIONAL_REQUIREMENTS[symbol]?.minNotional || 5.0; // standard Binance Futures floor is $5.00
 }
@@ -1046,21 +1054,22 @@ function startTelegramPolling(token: string) {
 }
 
 
-// --- 🛡️ 03. Stop Loss එක Entry Point එකට ගැනිමට අවශ්ෂවු විට ---
+// --- 🛡️ 03. Stop Loss එක Entry Point එකට ගැනිමට අවශ්යවු විට ---
 function sendBreakevenAlert(pos: UserPosition, _triggerReason?: string): TelegramMessage {
   pos.be_alert_sent = true;
   pos.sl_price = pos.entry_price; // Lock Stop Loss to Entry Point
 
-  const entryStr = pos.entry_price.toFixed(4);
+  const entryStr = formatPrice(pos.entry_price);
   const beMsg: TelegramMessage = {
     id: `be-${Date.now()}-${pos.id}`,
     timestamp: new Date().toLocaleTimeString(),
     chat_id: pos.chat_id,
     sender_name: 'RedBull Master Bot',
     is_from_bot: true,
-    text: `Coin: ${pos.symbol}\n` +
-      `Entry Price: ${entryStr}\n` +
-      `Stop Loss එක ඉහත අගයට වෙනස් කරන්න`,
+    text: `🛡️ <b>BREAKEVEN ALERT (#${pos.signal_num}) 🔒</b>\n\n` +
+      `📍 <b>Coin:</b> ${pos.symbol} | <b>Side:</b> ${pos.side}\n` +
+      `💵 <b>Entry Price:</b> <code>${entryStr}</code>\n\n` +
+      `👉 Stop Loss එක ඉහත Entry Price (${entryStr}) අගයට වෙනස් කරන්න.`,
     buttons: [
       [
         { text: '🔒 SL Breakeven Locked', callback_data: `mute:${pos.signal_num}` },
@@ -1081,9 +1090,10 @@ function sendTimeoutAlert(pos: UserPosition): TelegramMessage {
     chat_id: pos.chat_id,
     sender_name: 'RedBull Master Bot',
     is_from_bot: true,
-    text: `Coin: ${pos.symbol}\n` +
-      `කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න.\n\n` +
-      `<code>${pos.symbol} TP: ${pos.tp_price.toFixed(4)} SL: ${pos.sl_price.toFixed(4)}</code>`,
+    text: `⏰ <b>TIME EXPIRED ALERT (#${pos.signal_num}) ⚠️</b>\n\n` +
+      `📍 <b>Coin:</b> ${pos.symbol}\n` +
+      `⏳ කාසියට ලබාදී ඇති කාලය අවසන්, කරුණාකර close කරන්න.\n\n` +
+      `<code>${pos.symbol} TP: ${formatPrice(pos.tp_price)} SL: ${formatPrice(pos.sl_price)}</code>`,
     buttons: [
       [
         { text: '❌ Close Position Now', callback_data: `close_pos:${pos.id}` },
@@ -1093,6 +1103,28 @@ function sendTimeoutAlert(pos: UserPosition): TelegramMessage {
   };
   broadcastTelegramAlert(timeoutMsg);
   return timeoutMsg;
+}
+
+// --- ⏰ 08. Periodic Signal Reminder Alert (from screenshot) ---
+function sendSignalReminderAlert(pos: UserPosition, reminderIndex: number): TelegramMessage {
+  const reminderMsg: TelegramMessage = {
+    id: `rem-${Date.now()}-${pos.id}-${reminderIndex}`,
+    timestamp: new Date().toLocaleTimeString(),
+    chat_id: pos.chat_id,
+    sender_name: 'RedBull Master Bot',
+    is_from_bot: true,
+    text: `⏰ <b>SIGNAL REMINDER (#${pos.signal_num}) [${reminderIndex}/10] 🔔</b>\n\n` +
+      `📍 <b>Coin:</b> ${pos.symbol} | <b>Side:</b> ${pos.side}\n` +
+      `💵 <b>Price:</b> ${formatPrice(pos.current_price)}\n\n` +
+      `👉 මෙම Alert එක නවතාලීමට පහත බොත්තම ඔබන්න හෝ /ok ලෙස Type කරන්න.`,
+    buttons: [
+      [
+        { text: '🛑 Stop Reminder (/ok)', callback_data: `mute:${pos.signal_num}` },
+      ],
+    ],
+  };
+  broadcastTelegramAlert(reminderMsg);
+  return reminderMsg;
 }
 
 // --- CORE DISPATCHER & RISK RECOVERY ENGINE (Requirements 01, 02, 05) ---
@@ -1253,21 +1285,22 @@ function dispatchTradeToUsers(
     // Recovery Loss
     // Recovery Loss pool
     // Duration
-    // + Coin Name, TP, SL one-click copyable block
+    // Format message matching user screenshot with emojis, Signal ID at top, and 2-row buttons
     const isLossTrade = pendingLossToAdd > 0;
-    const targetTpStr = recoveryTpPrice.toFixed(4);
-    const slStr = initialSl.toFixed(4);
+    const targetTpStr = formatPrice(recoveryTpPrice);
+    const slStr = formatPrice(initialSl);
     const copyBlock = `${symbol} TP: ${targetTpStr} SL: ${slStr}`;
+    const modeTag = botConfig.paper_trading ? '📝 PAPER' : '⚡ LIVE';
 
     const alertText = 
-      `Coin: ${symbol}\n` +
-      `Deraction: ${side}\n` +
-      `Targert Tp (full): ${targetTpStr}\n` +
-      `Stop Loss: ${slStr}\n` +
-      `Margin: $${margin.toFixed(2)} (${leverage}x)\n` +
-      `Recovery Loss: ${isLossTrade ? `+$${pendingLossToAdd.toFixed(4)}` : '$0.0000'}\n` +
-      `Recovery Loss pool: $${u.global_loss_pool.toFixed(4)}\n` +
-      `Duration: ${tradeDuration} mins\n\n` +
+      `🔔 <b>NEW TRADING SIGNAL #${sigNum} 🚨 [${modeTag}]</b>\n\n` +
+      `📍 Coin: <b>${symbol}</b> | Direction: <b>${side}</b>\n` +
+      `💵 Margin: $${margin.toFixed(2)} | Leverage: ${leverage}x\n` +
+      `🎯 Target TP: ${targetTpStr}\n` +
+      `🛑 Target SL: ${slStr}\n` +
+      `📈 Recovering Loss: $${pendingLossToAdd.toFixed(4)}\n` +
+      `📊 Remaining Pool: $${u.global_loss_pool.toFixed(4)}\n\n` +
+      `💡 Alert නතර කිරීමට පහත බොත්තම ඔබන්න.\n\n` +
       `<code>${copyBlock}</code>`;
 
     const dispatchMsg: TelegramMessage = {
@@ -1279,12 +1312,11 @@ function dispatchTradeToUsers(
       text: alertText,
       buttons: [
         [
-          { text: '📋 Copy Signal (Coin+TP+SL)', callback_data: `copy:${sigNum}` },
-          { text: '🚫 Skip Trade & Refund', callback_data: `skip_trade:${sigNum}` },
+          { text: '🛑 Mute (/ok)', callback_data: `mute:${sigNum}` },
+          { text: '🚫 Skip & Refund', callback_data: `skip_trade:${sigNum}` },
         ],
         [
-          { text: '🔒 SL to Entry', callback_data: `be_alert:${newPos.id}` },
-          { text: '🔕 Mute Alerts', callback_data: `mute:${sigNum}` },
+          { text: '📊 My Status', callback_data: 'my_status' },
         ],
       ],
     };
@@ -2575,6 +2607,16 @@ function updatePositionsLivePrices() {
       sendTimeoutAlert(pos);
     }
 
+    // --- ⏰ 08. Periodic Signal Reminders ([1/10], [2/10], etc. as in screenshot) ---
+    const reminderMinute = Math.floor(elapsedMins);
+    if (reminderMinute >= 1 && reminderMinute <= 10 && pos.reminders_sent < reminderMinute && !pos.reminders_auto_stopped) {
+      const u = users.get(pos.chat_id);
+      if (u && u.is_muted !== 1) {
+        pos.reminders_sent = reminderMinute;
+        sendSignalReminderAlert(pos, reminderMinute);
+      }
+    }
+
     // --- ℹ️ 09. විනාඩි 10ක් Reminder එක වැදුනු පසු ---
     if (!pos.reminders_auto_stopped && elapsedMins >= 10) {
       pos.reminders_auto_stopped = true;
@@ -2585,7 +2627,8 @@ function updatePositionsLivePrices() {
         chat_id: pos.chat_id,
         sender_name: 'RedBull Master Bot',
         is_from_bot: true,
-        text: `ℹ️ Reminder Auto-Stopped: (#${pos.signal_num}) ${pos.symbol} සඳහා විනාඩි 10 ක් සම්පූර්ණ වූ බැවින් මතක් කිරීම් නතර කරන ලදී.`,
+        text: `ℹ️ <b>REMINDER AUTO-STOPPED (#${pos.signal_num})</b> 🔕\n\n` +
+          `📍 Coin: <b>${pos.symbol}</b> සඳහා විනාඩි 10 ක් සම්පූර්ණ වූ බැවින් මතක් කිරීම් නතර කරන ලදී.`,
       });
     }
 
@@ -2656,10 +2699,11 @@ function closePosition(positionId: number, reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL
       chat_id: pos.chat_id,
       sender_name: 'RedBull Master Bot',
       is_from_bot: true,
-      text: `🎯 TAKE PROFIT (WIN)! 🟢\n\n` +
-        `📍 Coin: ${pos.symbol}\n\n` +
-        `💰 Profit: +$${profitVal}\n` +
-        `🏁 Exit Price: ${exitPriceStr}`,
+      text: `🎯 <b>TAKE PROFIT (WIN) (#${pos.signal_num})! 🟢</b>\n\n` +
+        `📍 <b>Coin:</b> ${pos.symbol} | <b>Side:</b> ${pos.side}\n` +
+        `💰 <b>Profit:</b> +$${profitVal}\n` +
+        `🏁 <b>Exit Price:</b> ${formatPrice(exitPrice)}` +
+        (pos.attached_loss > 0 ? `\n🩹 <b>Loss Recovered:</b> +$${pos.attached_loss.toFixed(4)}` : ''),
     });
   } else if (reason === 'SL_HIT') {
     // Stop loss hit -> attached loss + margin SL added back to user's loss pool
@@ -2685,10 +2729,11 @@ function closePosition(positionId: number, reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL
       chat_id: pos.chat_id,
       sender_name: 'RedBull Master Bot',
       is_from_bot: true,
-      text: `🛑 STOP LOSS (LOSS)! 🔴\n\n` +
-        `📍 Coin: ${pos.symbol}\n\n` +
-        `💸 Loss Amount: -$${lossAmount.toFixed(4)}\n` +
-        `🏁 Exit Price: ${exitPriceStr}`,
+      text: `🛑 <b>STOP LOSS HIT (#${pos.signal_num})! 🔴</b>\n\n` +
+        `📍 <b>Coin:</b> ${pos.symbol} | <b>Side:</b> ${pos.side}\n` +
+        `💸 <b>Loss Amount:</b> -$${lossAmount.toFixed(4)}\n` +
+        `🏁 <b>Exit Price:</b> ${formatPrice(exitPrice)}\n` +
+        `🩸 <b>New Loss Pool:</b> $${user.global_loss_pool.toFixed(4)}`,
     });
 
     // Track consecutive coin losses
