@@ -45,6 +45,8 @@ export interface UserPosition {
   is_open: number;
   reminders_sent: number;
   be_alert_sent?: boolean; // True once Breakeven message sent when base TP is reached
+  duration_mins?: number; // Allocated trade time in minutes (e.g. 60m)
+  timeout_alert_sent?: boolean; // True once time expired message is sent
   pnl?: number;
   pnl_pct?: number;
   closed_at?: number;
@@ -62,6 +64,7 @@ export interface BotConfig {
   signal_cooldown_mins: number;
   btc_dump_filter: boolean;
   stale_timeout_hours: number;
+  default_trade_duration_mins?: number;
   timezone: string;
   admin_chat_id: string;
   binance_connected: boolean;

@@ -254,13 +254,19 @@ export default function App() {
     }
   };
 
-  // Dispatch trade signal
-  const handleDispatchSignal = async (symbol: string, side: 'BUY' | 'SELL', price: number) => {
+  // Dispatch trade signal (Supports 01 Normal and 02 Loss Recovery with 04 Duration)
+  const handleDispatchSignal = async (
+    symbol: string, 
+    side: 'BUY' | 'SELL', 
+    price: number,
+    durationMins?: number,
+    isLossTrade?: boolean
+  ) => {
     try {
       const res = await fetch('/api/signals/dispatch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol, side, price }),
+        body: JSON.stringify({ symbol, side, price, durationMins, isLossTrade }),
       });
       const data = await res.json();
       if (data.success) {
@@ -271,6 +277,36 @@ export default function App() {
       loadData();
     } catch {
       showToast('Failed to dispatch signal');
+    }
+  };
+
+  // 03. Stop Loss එක Entry Point එකට ගැනීමේ Breakeven Alert
+  const handleBreakevenAlert = async (id: number) => {
+    try {
+      const res = await fetch(`/api/positions/${id}/breakeven-alert`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        showToast('🛡️ "Stop Loss එක ඉහත අගයට වෙනස් කරන්න" Breakeven Alert එක යවන ලදී!');
+        loadData();
+      }
+    } catch {
+      showToast('Failed to trigger Breakeven alert');
+    }
+  };
+
+  // 04. ලබාදී ඇති කාලය අවසන් වූ විට Close කිරීමේ Timeout Alert
+  const handleTimeoutAlert = async (id: number) => {
+    try {
+      const res = await fetch(`/api/positions/${id}/timeout-alert`, {
+        method: 'POST',
+      });
+      if (res.ok) {
+        showToast('⏰ "කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න." Alert එක යවන ලදී!');
+        loadData();
+      }
+    } catch {
+      showToast('Failed to trigger Timeout alert');
     }
   };
 
@@ -447,6 +483,8 @@ export default function App() {
             positions={positions}
             onClosePosition={handleClosePosition}
             onSkipPosition={handleSkipPosition}
+            onBreakevenAlert={handleBreakevenAlert}
+            onTimeoutAlert={handleTimeoutAlert}
           />
         )}
 

@@ -36,6 +36,7 @@ const initialBotConfig: BotConfig = {
   strong_cut_threshold: 4,
   chop_score_band: 1,
   kijun_slope_len: 5,
+  default_trade_duration_mins: 60,
 };
 
 let botConfig: BotConfig = { ...initialBotConfig };
@@ -897,9 +898,70 @@ function startTelegramPolling(token: string) {
 }
 
 
-// --- CORE DISPATCHER & RISK RECOVERY ENGINE (from main.py) ---
+// --- 🛡️ 03. BREAKEVEN ALERT: STOP LOSS TO ENTRY POINT ---
+function sendBreakevenAlert(pos: UserPosition, triggerReason?: string): TelegramMessage {
+  pos.be_alert_sent = true;
+  pos.sl_price = pos.entry_price; // Lock Stop Loss to Entry Point
 
-function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice: number): {
+  const entryStr = pos.entry_price.toFixed(4);
+  const beMsg: TelegramMessage = {
+    id: `be-${Date.now()}-${pos.id}`,
+    timestamp: new Date().toLocaleTimeString(),
+    chat_id: pos.chat_id,
+    sender_name: 'RedBull Master Bot',
+    is_from_bot: true,
+    text: `🛡️ <b>BREAKEVEN (BE) ALERT: MOVE STOP LOSS TO ENTRY!</b> 🔒\n\n` +
+      `💎 <b>Coin:</b> <code>${pos.symbol}</code>\n` +
+      `💵 <b>Entry Price:</b> <code>$${entryStr}</code>\n\n` +
+      `⚠️ <b>Stop Loss එක ඉහත අගයට වෙනස් කරන්න</b>\n\n` +
+      `<i>${pos.symbol} කාසියේ ${triggerReason ? triggerReason + ' බැවින් ' : ''}Stop Loss (SL) අගය ඔබගේ Entry Price ($${entryStr}) වෙත වෙනස් කර Zero-Risk (කිසිදු පාඩුවක් නොවන) තත්ත්වයට පත් කරගන්න.</i>\n\n` +
+      `📋 <b>Copy Entry Price:</b>\n` +
+      `<code>${entryStr}</code>`,
+    buttons: [
+      [
+        { text: '🔒 SL Breakeven Locked', callback_data: `mute:${pos.signal_num}` },
+        { text: '📊 My Status', callback_data: 'my_status' },
+      ],
+    ],
+  };
+  broadcastTelegramAlert(beMsg);
+  return beMsg;
+}
+
+// --- ⏰ 04. TIME EXPIRED ALERT: CLOSE COIN ON TIMEOUT ---
+function sendTimeoutAlert(pos: UserPosition): TelegramMessage {
+  pos.timeout_alert_sent = true;
+
+  const timeoutMsg: TelegramMessage = {
+    id: `timeout-${Date.now()}-${pos.id}`,
+    timestamp: new Date().toLocaleTimeString(),
+    chat_id: pos.chat_id,
+    sender_name: 'RedBull Master Bot',
+    is_from_bot: true,
+    text: `⏰ <b>TRADE TIME EXPIRED ALERT!</b> ⌛\n\n` +
+      `💎 <b>Coin:</b> <code>${pos.symbol}</code>\n\n` +
+      `🚨 <b>කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න.</b>\n\n` +
+      `<i>${pos.symbol} කාසියට ලබා දී තිබූ කාලය (${pos.duration_mins || 60} මිනිත්තු) අවසන් වී ඇති බැවින් කරුණාකර මෙම ට්‍රේඩ් එක දැන්ම වෙළඳපල මිලෙන් Close කරන්න.</i>`,
+    buttons: [
+      [
+        { text: '❌ Close Position Now', callback_data: `close_pos:${pos.id}` },
+        { text: '🔕 Mute Alert', callback_data: `mute:${pos.signal_num}` },
+      ],
+    ],
+  };
+  broadcastTelegramAlert(timeoutMsg);
+  return timeoutMsg;
+}
+
+// --- CORE DISPATCHER & RISK RECOVERY ENGINE (Requirements 01, 02, 05) ---
+
+function dispatchTradeToUsers(
+  symbol: string, 
+  side: 'BUY' | 'SELL', 
+  currentPrice: number,
+  durationMins?: number,
+  forceLoss?: boolean
+): {
   success: boolean;
   message: string;
   dispatchedCount: number;
@@ -946,6 +1008,7 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
   botConfig.signal_count += 1;
   const sigNum = botConfig.signal_count;
   let dispatched = 0;
+  const tradeDuration = durationMins || botConfig.default_trade_duration_mins || 60;
 
   for (const [, u] of users.entries()) {
     if (u.is_approved !== 1 || u.is_active !== 1) continue;
@@ -961,7 +1024,6 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
     const leverage = u.leverage;
 
     // 🛑 REQUIREMENT 1: Binance Min Notional ($5 / $10) Filter & Order Rejection Guard
-    // Filter out coins that do not meet the user's margin * leverage notional floor
     const notionalCheck = isCoinNotionalEligible(symbol, margin, leverage);
     if (!notionalCheck.eligible) {
       console.warn(`[Binance Min Notional Guard] Skipping dispatch for user ${u.chat_id} on ${symbol}: ${notionalCheck.reason}`);
@@ -974,12 +1036,14 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
     const bhBalanceSet = u.blacklist_balance_set;
     const userPool = u.global_loss_pool;
 
-    // Capped Partial Recovery Logic (from main.py lines 645-660)
+    // Capped Partial Recovery Logic
     const maxRecoverPerTrade = 0.20; // Max $0.20 per trade to keep TP reachable
     let pendingLossToAdd = 0.0;
     if (userPool > 0) {
       pendingLossToAdd = Math.min(userPool * (rtpPct / 100.0), maxRecoverPerTrade);
       u.global_loss_pool = Math.max(0.0, userPool - pendingLossToAdd);
+    } else if (forceLoss) {
+      pendingLossToAdd = 0.15;
     }
 
     const positionSize = margin * leverage;
@@ -987,7 +1051,7 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
     const baseProfitDollar = margin * (fastTpPct / 100.0);
     const baseMovePct = baseProfitDollar / positionSize;
 
-    // 🎯 REQUIREMENT 2: Calculate Base TP (original coin TP before loss recovery addition)
+    // Calculate Base TP
     let baseTpPrice = 0;
     if (side === 'BUY') {
       baseTpPrice = currentPrice * (1.0 + baseMovePct);
@@ -995,7 +1059,7 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
       baseTpPrice = currentPrice * (1.0 - baseMovePct);
     }
 
-    // 🎯 Calculate Full Recovery TP (Base TP + Attached Loss Recovery)
+    // Calculate Full Recovery TP (Base TP + Attached Loss Recovery)
     const targetProfitDollar = baseProfitDollar + pendingLossToAdd + bhBalanceSet;
     const maxAllowedMove = 0.05; // Cap max move at 5% to guarantee achievable TP
     const calculatedMove = targetProfitDollar / positionSize;
@@ -1031,27 +1095,39 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
       is_open: 1,
       reminders_sent: 0,
       be_alert_sent: false,
+      duration_mins: tradeDuration,
+      timeout_alert_sent: false,
     };
 
     positions.unshift(newPos);
     dispatched++;
 
-    // Generate Telegram Dispatch Message (Sinhala & English matching main.py)
+    // --- Format message according to Requirements 01, 02, 05 ---
+    const isLossTrade = pendingLossToAdd > 0;
     const directionBadge = side === 'BUY' ? 'BUY / LONG 🟢' : 'SELL / SHORT 🔴';
+    const targetTpStr = recoveryTpPrice.toFixed(4);
+    const slStr = initialSl.toFixed(4);
+    const entryStr = currentPrice.toFixed(4);
 
-    let tpSection = '';
-    let recoveryFooter = '';
+    // 05. Coin Name, TP, SL single-tap one-click copyable format (tapping code block copies in Telegram)
+    const copyBlock = `${symbol} TP: ${targetTpStr} SL: ${slStr}`;
 
-    if (pendingLossToAdd > 0) {
-      tpSection =
-        `🎯 <b>Target TP (Full):</b> $${recoveryTpPrice.toFixed(4)}\n` +
-        `⚡ <b>Base TP (BE Trigger):</b> $${baseTpPrice.toFixed(4)}\n`;
-      recoveryFooter =
+    let title = '';
+    let recoveryNotes = '';
+
+    if (isLossTrade) {
+      // 02. Loss Trade එකක් සදහා:
+      // Coin, Direction, Target Tp (full), Stop Loss, Margin
+      title = `🚀 <b>TRADE SIGNAL #${sigNum} (Loss Recovery)</b> 🩹`;
+      recoveryNotes =
         `\n🩹 <b>Loss Recovery:</b> +$${pendingLossToAdd.toFixed(4)} (Step ${u.loss_recovery_step + 1})\n` +
-        `💡 <i>මිල Base TP ($${baseTpPrice.toFixed(4)}) වෙත ළඟා වූ පසු SL එක Entry Price ($${currentPrice.toFixed(4)}) වෙත ගන්නා ලෙස (Breakeven) Alert එකක් ලැබෙනු ඇත.</i>`;
+        `⚡ <b>Base TP (Breakeven Trigger):</b> $${baseTpPrice.toFixed(4)}\n` +
+        `💡 <i>මිල Base TP වෙත ළඟා වූ පසු Stop Loss එක Entry Price වෙත මාරු කිරීමට Alert එකක් ලැබෙනු ඇත.</i>\n`;
     } else {
-      tpSection = `🎯 <b>Take Profit (TP):</b> $${baseTpPrice.toFixed(4)}\n`;
-      recoveryFooter = `\nSinhala: <i>සිග්නල් එක ක්‍රියාත්මක විය. සාමාන්‍ය ලාභ ඉලක්කය ක්‍රියාත්මකයි.</i>`;
+      // 01. Loss නැති trade එකක් සදහා:
+      // Coin, Direction, Target Tp (full), Stop Loss, Margin
+      title = `🚀 <b>TRADE SIGNAL #${sigNum}</b> 🟢`;
+      recoveryNotes = `\n💡 <i>සාමාන්‍ය වෙළඳ ඉලක්කය ක්‍රියාත්මකයි.</i>\n`;
     }
 
     const dispatchMsg: TelegramMessage = {
@@ -1060,17 +1136,24 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
       chat_id: u.chat_id,
       sender_name: 'RedBull Master Bot',
       is_from_bot: true,
-      text: `🚀 <b>TRADE SIGNAL #${sigNum} DISPATCHED!</b>\n\n` +
+      text: `${title}\n\n` +
         `💎 <b>Coin:</b> <code>${symbol}</code>\n` +
         `📈 <b>Direction:</b> ${directionBadge}\n` +
-        `💵 <b>Entry Price:</b> $${currentPrice.toFixed(4)}\n` +
-        tpSection +
-        `🛑 <b>Stop Loss:</b> $${initialSl.toFixed(4)}\n` +
+        `🎯 <b>Target Tp (full):</b> <code>$${targetTpStr}</code>\n` +
+        `🛑 <b>Stop Loss:</b> <code>$${slStr}</code>\n` +
         `⚙️ <b>Margin:</b> $${margin.toFixed(2)} (${leverage}x Lev)\n` +
-        recoveryFooter,
+        `💵 <b>Entry Price:</b> $${entryStr}\n` +
+        `⏱️ <b>Duration:</b> ${tradeDuration} mins\n` +
+        recoveryNotes +
+        `\n📋 <b>One-Click Copy (Coin, TP, SL):</b>\n` +
+        `<code>${copyBlock}</code>`,
       buttons: [
         [
+          { text: '📋 Copy Signal (Coin+TP+SL)', callback_data: `copy:${sigNum}` },
           { text: '🚫 Skip Trade & Refund', callback_data: `skip_trade:${sigNum}` },
+        ],
+        [
+          { text: '🔒 SL to Entry', callback_data: `be_alert:${newPos.id}` },
           { text: '🔕 Mute Alerts', callback_data: `mute:${sigNum}` },
         ],
       ],
@@ -1352,23 +1435,80 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       break;
     }
 
+    // 🎯 01 & 02. Test Signals (Normal vs Loss Recovery)
     case 'test_signal':
     case 'signal':
     case 'test': {
-      const testSym = tokens[1] ? (tokens[1].toUpperCase().endsWith('USDT') ? tokens[1].toUpperCase() : `${tokens[1].toUpperCase()}USDT`) : 'DOGEUSDT';
-      const testSide = tokens[2] && tokens[2].toUpperCase() === 'SELL' ? 'SELL' : 'BUY';
+      const isLoss = tokens.some((t) => t.toLowerCase() === 'loss' || t.toLowerCase() === 'recovery');
+      const testSym = tokens[1] && !['loss', 'normal', 'recovery', 'buy', 'sell'].includes(tokens[1].toLowerCase()) 
+        ? (tokens[1].toUpperCase().endsWith('USDT') ? tokens[1].toUpperCase() : `${tokens[1].toUpperCase()}USDT`) 
+        : 'SOLUSDT';
+      const testSide = tokens.some((t) => t.toUpperCase() === 'SELL') ? 'SELL' : 'BUY';
       const m = marketCache.get(testSym);
-      const testPrice = m?.price || (testSym === 'DOGEUSDT' ? 0.165 : 1.25);
+      const testPrice = m?.price || (testSym === 'SOLUSDT' ? 180.5 : 1.25);
 
-      const res = dispatchTradeToUsers(testSym, testSide, testPrice);
+      const res = dispatchTradeToUsers(testSym, testSide, testPrice, 60, isLoss);
       if (res.success) {
         replyText = `🚀 <b>TEST SIGNAL DISPATCHED!</b>\n\n` +
           `🪙 Coin: <b>${testSym}</b> (${testSide})\n` +
+          `🎯 Type: <b>${isLoss ? '02. Loss Trade (Recovery Attached) 🩹' : '01. Loss නැති Trade (Normal) 🟢'}</b>\n` +
           `💵 Price: $${testPrice}\n` +
-          `👥 Dispatched to <b>${res.dispatchedCount} active user(s)</b>.\n\n` +
-          `<i>Check Telegram for the trade signal alert with TP/SL and Breakeven trigger!</i>`;
+          `👥 Dispatched to <b>${res.dispatchedCount} active member(s)</b>.\n\n` +
+          `<i>Check Telegram for the signal alert with 1-click single-tap copy support!</i>`;
       } else {
         replyText = `⚠️ <b>Signal Dispatch Result:</b> ${res.message}`;
+      }
+      break;
+    }
+
+    // 🛡️ 03. Stop Loss එක Entry Point එකට ගැනීමේ විධානය
+    case 'be':
+    case 'breakeven': {
+      const targetQuery = tokens[1];
+      const pos = targetQuery
+        ? positions.find((p) => p.is_open === 1 && (p.symbol.toUpperCase() === targetQuery.toUpperCase() || p.symbol.toUpperCase() === `${targetQuery.toUpperCase()}USDT` || p.signal_num === parseInt(targetQuery, 10)))
+        : positions.find((p) => p.is_open === 1 && (user.is_admin === 1 || p.chat_id === chatId));
+      if (!pos) {
+        replyText = '⚠️ <b>ක්‍රියාකාරී Position එකක් හමු නොවීය.</b> Usage: <code>/be &lt;coin or signal_num&gt;</code>';
+      } else {
+        sendBreakevenAlert(pos, 'Manually requested via /be');
+        replyText = `🛡️ <b>BREAKEVEN ALERT DISPATCHED FOR ${pos.symbol}!</b>\n` +
+          `Stop Loss අගය Entry Price ($${pos.entry_price.toFixed(4)}) වෙත මාරු කිරීමේ Alert එක සාර්ථකව යවන ලදී.`;
+      }
+      break;
+    }
+
+    // ⏰ 04. ලබාදී ඇති කාලය අවසන් වූ විට Close කිරීමේ විධානය
+    case 'timeout':
+    case 'expire': {
+      const targetQuery = tokens[1];
+      const pos = targetQuery
+        ? positions.find((p) => p.is_open === 1 && (p.symbol.toUpperCase() === targetQuery.toUpperCase() || p.symbol.toUpperCase() === `${targetQuery.toUpperCase()}USDT` || p.signal_num === parseInt(targetQuery, 10)))
+        : positions.find((p) => p.is_open === 1 && (user.is_admin === 1 || p.chat_id === chatId));
+      if (!pos) {
+        replyText = '⚠️ <b>ක්‍රියාකාරී Position එකක් හමු නොවීය.</b> Usage: <code>/timeout &lt;coin or signal_num&gt;</code>';
+      } else {
+        sendTimeoutAlert(pos);
+        replyText = `⏰ <b>TIME EXPIRED ALERT DISPATCHED FOR ${pos.symbol}!</b>\n` +
+          `"කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න." Alert එක සාර්ථකව යවන ලදී.`;
+      }
+      break;
+    }
+
+    // 📋 05. Coin Name, TP, SL අගයන් එකවර කොපි කිරීමේ විධානය
+    case 'copy':
+    case 'copysignal': {
+      const targetQuery = tokens[1];
+      const pos = targetQuery
+        ? positions.find((p) => p.is_open === 1 && (p.symbol.toUpperCase() === targetQuery.toUpperCase() || p.symbol.toUpperCase() === `${targetQuery.toUpperCase()}USDT` || p.signal_num === parseInt(targetQuery, 10)))
+        : positions.find((p) => p.is_open === 1 && (user.is_admin === 1 || p.chat_id === chatId));
+      if (!pos) {
+        replyText = '⚠️ <b>ක්‍රියාකාරී Position එකක් හමු නොවීය.</b> Usage: <code>/copy &lt;coin or signal_num&gt;</code>';
+      } else {
+        const copyBlock = `${pos.symbol} TP: ${pos.tp_price.toFixed(4)} SL: ${pos.sl_price.toFixed(4)}`;
+        replyText = `📋 <b>QUICK COPY (Coin + TP + SL):</b>\n\n` +
+          `<code>${copyBlock}</code>\n\n` +
+          `<i>👆 ඉහත code කොටුව මත tap කර සම්පූර්ණ අගයන් එකවර කොපි කරගන්න.</i>`;
       }
       break;
     }
@@ -1414,11 +1554,13 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
         `• <b>/start</b> - Bot වෙත සම්බන්ධ වීම සහ ලියාපදිංචිය\n` +
         `• <b>/status</b> - ඔබගේ open trades සහ loss recovery තත්වය\n` +
         `• <b>/positions</b> - ඔබගේ සියලු සක්‍රිය trades ලැයිස්තුව\n` +
-        `• <b>/whitelist</b> - අනුමත කාසි ලැයිස්තුව\n` +
+        `• <b>/be &lt;coin&gt;</b> - Stop Loss එක Entry Point එකට ගැනීමේ Alert එක\n` +
+        `• <b>/timeout &lt;coin&gt;</b> - කාලය අවසන් වූ විට Close කිරීමේ Alert එක\n` +
+        `• <b>/copy &lt;coin&gt;</b> - Coin, TP, SL එකවර කොපි කරගැනීම\n` +
         `• <b>/test_signal</b> - Test Signal එකක් trigger කර Telegram වෙත යැවීම\n` +
+        `• <b>/skip &lt;id&gt;</b> - Trade එක cancel කර loss එක refund කිරීම\n` +
         `• <b>/my_off</b> - Trade signals තාවකාලිකව pause කිරීම\n` +
-        `• <b>/my_on</b> - Trade signals නැවත ආරම්භ කිරීම\n` +
-        `• <b>/skip &lt;id&gt;</b> - Trade එක cancel කර loss එක refund කිරීම\n\n` +
+        `• <b>/my_on</b> - Trade signals නැවත ආරම්භ කිරීම\n\n` +
         `👑 <b>Admin Commands:</b>\n` +
         `• <b>/bot_on</b> / <b>/bot_off</b> - Scanner master switch\n` +
         `• <b>/users</b> - සියලු users ලැයිස්තුව\n` +
@@ -1509,6 +1651,51 @@ function handleCallbackQuery(chatId: string, data: string): { success: boolean; 
     return { success: false, message: `Trade #${sig} is not active` };
   }
 
+  // 05. Copy signal callback
+  if (data.startsWith('copy:')) {
+    const sig = parseInt(data.split(':')[1], 10);
+    const pos = positions.find((p) => p.signal_num === sig);
+    if (pos) {
+      const copyStr = `${pos.symbol} TP: ${pos.tp_price.toFixed(4)} SL: ${pos.sl_price.toFixed(4)}`;
+      broadcastTelegramAlert({
+        id: `cb-${Date.now()}`,
+        timestamp: new Date().toLocaleTimeString(),
+        chat_id: chatId,
+        sender_name: 'RedBull Master Bot',
+        is_from_bot: true,
+        text: `📋 <b>SIGNAL DETAILS COPIED:</b>\n\n` +
+          `<code>${copyStr}</code>\n\n` +
+          `<i>👆 ඉහත code කොටුව මත tap කර Coin, TP, SL එකවර කොපි කරගන්න.</i>`,
+      });
+      return { success: true, message: 'Copy block sent' };
+    }
+  }
+
+  // 03. Move SL to Entry callback
+  if (data.startsWith('be_alert:')) {
+    const posId = parseInt(data.split(':')[1], 10);
+    const pos = positions.find((p) => p.id === posId && p.is_open === 1);
+    if (pos) {
+      sendBreakevenAlert(pos, 'Callback request');
+      return { success: true, message: 'Breakeven alert dispatched' };
+    }
+  }
+
+  // 04. Close position callback
+  if (data.startsWith('close_pos:')) {
+    const posId = parseInt(data.split(':')[1], 10);
+    closePosition(posId, 'MANUAL_CLOSE');
+    broadcastTelegramAlert({
+      id: `cb-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString(),
+      chat_id: chatId,
+      sender_name: 'RedBull Master Bot',
+      is_from_bot: true,
+      text: `✅ <b>Position #${posId} සාර්ථකව Close කරන ලදී!</b>`,
+    });
+    return { success: true, message: 'Position closed' };
+  }
+
   if (data === 'my_status') {
     handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/status');
     return { success: true, message: 'Status sent' };
@@ -1555,7 +1742,7 @@ function updatePositionsLivePrices() {
 
     const posSize = pos.margin * pos.leverage;
 
-    // --- 🎯 REQUIREMENT 2: Breakeven (BE) Alert & Stop-Loss Lock ---
+    // --- 🎯 03. Breakeven (BE) Alert & Stop-Loss to Entry Point ---
     // When market reaches Base TP, send Telegram message immediately to move SL to Entry Price!
     if (!pos.be_alert_sent && pos.attached_loss > 0 && pos.base_tp_price) {
       const hitBaseTp = pos.side === 'BUY'
@@ -1563,35 +1750,15 @@ function updatePositionsLivePrices() {
         : pos.current_price <= pos.base_tp_price;
 
       if (hitBaseTp) {
-        pos.be_alert_sent = true;
-        // Lock Breakeven on the position (SL moved to Entry Price)
-        pos.sl_price = pos.entry_price;
-
-        const beMsg: TelegramMessage = {
-          id: `be-${Date.now()}-${pos.id}`,
-          timestamp: new Date().toLocaleTimeString(),
-          chat_id: pos.chat_id,
-          sender_name: 'RedBull Master Bot',
-          is_from_bot: true,
-          text: `🛡️ <b>BREAKEVEN (BE) ALERT: MOVE STOP-LOSS TO ENTRY!</b> 🔒\n\n` +
-            `💎 <b>Coin:</b> <code>${pos.symbol}</code> (Signal #${pos.signal_num})\n` +
-            `📈 <b>Direction:</b> ${pos.side === 'BUY' ? 'BUY / LONG 🟢' : 'SELL / SHORT 🔴'}\n` +
-            `⚡ <b>Base TP Hit:</b> $${pos.base_tp_price.toFixed(4)}\n` +
-            `💵 <b>Entry Price:</b> $${pos.entry_price.toFixed(4)}\n` +
-            `🎯 <b>Remaining Recovery TP:</b> $${pos.tp_price.toFixed(4)}\n` +
-            `🛡️ <b>Updated SL:</b> $${pos.entry_price.toFixed(4)} (Breakeven - Zero Risk)\n\n` +
-            `Sinhala: <i>⚠️ <b>අවධානයට:</b> ${pos.symbol} කාසියේ මුල් <b>Base TP ($${pos.base_tp_price.toFixed(4)})</b> මට්ටමට මිල පැමිණ ඇත! ` +
-            `කරුණාකර ඔබගේ Stop-Loss (SL) අගය <b>Entry Price ($${pos.entry_price.toFixed(4)})</b> වෙත ගෙන ගොස් සකසන්න (Breakeven - BE). ` +
-            `එමගින් ප්‍රාග්ධනය 100% ක් සුරක්ෂිත වන අතර කිසිදු පාඩුවක් නොවී සම්පූර්ණ Recovery TP ($${pos.tp_price.toFixed(4)}) දක්වා රැඳී සිටිය හැක.</i>`,
-          buttons: [
-            [
-              { text: '🔒 SL Breakeven Locked', callback_data: `mute:${pos.signal_num}` },
-              { text: '📊 My Status', callback_data: 'my_status' },
-            ],
-          ],
-        };
-        broadcastTelegramAlert(beMsg);
+        sendBreakevenAlert(pos, `Base TP ($${pos.base_tp_price.toFixed(4)}) අගයට මිල ළඟා වී ඇති`);
       }
+    }
+
+    // --- ⏰ 04. Check if allocated trade duration has expired ---
+    const elapsedMins = (Date.now() - pos.opened_at) / (1000 * 60);
+    const durationLimit = pos.duration_mins || botConfig.default_trade_duration_mins || 60;
+    if (!pos.timeout_alert_sent && elapsedMins >= durationLimit) {
+      sendTimeoutAlert(pos);
     }
 
     if (pos.side === 'BUY') {
@@ -2045,6 +2212,28 @@ async function startServer() {
     res.json({ success: true, position: pos });
   });
 
+  // 🛡️ 03. Breakeven alert trigger from Dashboard
+  app.post('/api/positions/:id/breakeven-alert', (req: Request, res: Response) => {
+    const id = parseInt(req.params.id, 10);
+    const pos = positions.find((p) => p.id === id && p.is_open === 1);
+    if (!pos) {
+      return res.status(404).json({ error: 'Position not found' });
+    }
+    const beMsg = sendBreakevenAlert(pos, 'Dashboard Trigger');
+    res.json({ success: true, position: pos, message: beMsg });
+  });
+
+  // ⏰ 04. Time expired alert trigger from Dashboard
+  app.post('/api/positions/:id/timeout-alert', (req: Request, res: Response) => {
+    const id = parseInt(req.params.id, 10);
+    const pos = positions.find((p) => p.id === id && p.is_open === 1);
+    if (!pos) {
+      return res.status(404).json({ error: 'Position not found' });
+    }
+    const timeoutMsg = sendTimeoutAlert(pos);
+    res.json({ success: true, position: pos, message: timeoutMsg });
+  });
+
   // 5. Coins Market & Lists
   app.get('/api/coins', (req: Request, res: Response) => {
     seedBaselineCoins();
@@ -2097,9 +2286,9 @@ async function startServer() {
     res.json({ success: true, blacklist: Array.from(blacklist.entries()) });
   });
 
-  // 6. Manual Signal Dispatch
+  // 6. Manual Signal Dispatch (Supports Requirements 01, 02, 04, 05)
   app.post('/api/signals/dispatch', (req: Request, res: Response) => {
-    const { symbol, side, price } = req.body;
+    const { symbol, side, price, durationMins, isLossTrade } = req.body;
     if (!symbol || !side) {
       return res.status(400).json({ error: 'Symbol and side are required' });
     }
@@ -2108,7 +2297,13 @@ async function startServer() {
     const m = marketCache.get(sym);
     const executionPrice = Number(price) || m?.price || 100.0;
 
-    const result = dispatchTradeToUsers(sym, side, executionPrice);
+    const result = dispatchTradeToUsers(
+      sym, 
+      side, 
+      executionPrice, 
+      Number(durationMins) || 60, 
+      Boolean(isLossTrade)
+    );
     res.json(result);
   });
 

@@ -11,7 +11,9 @@ import {
   Activity,
   History,
   ShieldCheck,
-  Zap
+  Zap,
+  Copy,
+  Check
 } from 'lucide-react';
 import { UserPosition } from '../types';
 
@@ -19,14 +21,26 @@ interface PositionsTabProps {
   positions: UserPosition[];
   onClosePosition: (id: number, reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL_CLOSE' | 'SKIPPED_REFUND') => void;
   onSkipPosition: (id: number) => void;
+  onBreakevenAlert?: (id: number) => void;
+  onTimeoutAlert?: (id: number) => void;
 }
 
 export const PositionsTab: React.FC<PositionsTabProps> = ({
   positions,
   onClosePosition,
   onSkipPosition,
+  onBreakevenAlert,
+  onTimeoutAlert,
 }) => {
   const [viewMode, setViewMode] = useState<'active' | 'history'>('active');
+  const [copiedId, setCopiedId] = useState<number | null>(null);
+
+  const handleCopy = (pos: UserPosition) => {
+    const text = `${pos.symbol} TP: ${pos.tp_price.toFixed(4)} SL: ${pos.sl_price.toFixed(4)}`;
+    navigator.clipboard.writeText(text);
+    setCopiedId(pos.id);
+    setTimeout(() => setCopiedId(null), 2500);
+  };
 
   const activePositions = positions.filter((p) => p.is_open === 1);
   const closedPositions = positions.filter((p) => p.is_open === 0);
@@ -190,6 +204,23 @@ export const PositionsTab: React.FC<PositionsTabProps> = ({
                               {pos.symbol}
                             </span>
                           </div>
+                          {/* Duration Tracker (04) */}
+                          {(() => {
+                            const elapsedMins = Math.round((Date.now() - pos.opened_at) / 60000);
+                            const totalLimit = pos.duration_mins || 60;
+                            const isExpired = elapsedMins >= totalLimit;
+                            return (
+                              <div className="mt-1 flex items-center gap-1 text-[10px]">
+                                <span className={`px-1.5 py-0.5 rounded font-mono ${
+                                  isExpired 
+                                    ? 'bg-rose-950 text-rose-300 border border-rose-800' 
+                                    : 'bg-slate-800 text-slate-400'
+                                }`}>
+                                  ⏱️ {elapsedMins}m / {totalLimit}m {isExpired ? '(කාලය අවසන්)' : ''}
+                                </span>
+                              </div>
+                            );
+                          })()}
                         </td>
 
                         {/* Member */}
@@ -244,6 +275,25 @@ export const PositionsTab: React.FC<PositionsTabProps> = ({
                             </div>
                           )}
                           <div className="text-rose-400 font-medium mt-0.5">SL: ${pos.sl_price.toFixed(4)}</div>
+                          
+                          {/* 05. Quick Copy Button */}
+                          <button
+                            onClick={() => handleCopy(pos)}
+                            className="mt-1.5 px-2 py-0.5 bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 border border-indigo-700/60 rounded text-[10px] flex items-center gap-1 transition-colors"
+                            title="05. Copy Coin, TP and SL"
+                          >
+                            {copiedId === pos.id ? (
+                              <>
+                                <Check className="w-3 h-3 text-emerald-400" />
+                                <span className="text-emerald-300 font-bold">Copied!</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3 text-indigo-400" />
+                                <span>Copy (Coin+TP+SL)</span>
+                              </>
+                            )}
+                          </button>
                         </td>
 
                         {/* Margin & Attached Loss */}
@@ -271,6 +321,26 @@ export const PositionsTab: React.FC<PositionsTabProps> = ({
                         {/* Actions & Simulation */}
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                            {/* 03. Move SL to Entry Button */}
+                            <button
+                              onClick={() => onBreakevenAlert?.(pos.id)}
+                              className="px-2 py-1 bg-amber-600/90 hover:bg-amber-500 text-white rounded text-[11px] font-bold transition-colors shadow-sm flex items-center gap-1"
+                              title="03. Stop Loss එක Entry Point එකට ගැනීමේ පණිවිඩය යවන්න"
+                            >
+                              <ShieldCheck className="w-3 h-3" />
+                              <span>SL to Entry</span>
+                            </button>
+
+                            {/* 04. Time Expired Alert Button */}
+                            <button
+                              onClick={() => onTimeoutAlert?.(pos.id)}
+                              className="px-2 py-1 bg-orange-600/90 hover:bg-orange-500 text-white rounded text-[11px] font-bold transition-colors shadow-sm flex items-center gap-1"
+                              title="04. කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න පණිවිඩය යවන්න"
+                            >
+                              <Clock className="w-3 h-3" />
+                              <span>කාලය අවසන්</span>
+                            </button>
+
                             <button
                               onClick={() => onClosePosition(pos.id, 'TP_HIT')}
                               className="px-2 py-1 bg-emerald-700/80 hover:bg-emerald-600 text-white rounded text-[11px] font-semibold transition-colors shadow-sm"
@@ -287,10 +357,10 @@ export const PositionsTab: React.FC<PositionsTabProps> = ({
                             </button>
                             <button
                               onClick={() => onSkipPosition(pos.id)}
-                              className="px-2 py-1 bg-amber-700/80 hover:bg-amber-600 text-white rounded text-[11px] font-semibold transition-colors shadow-sm"
+                              className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700 rounded text-[11px] font-semibold transition-colors shadow-sm"
                               title="Skip trade & refund attached loss to member pool"
                             >
-                              Skip & Refund
+                              Skip
                             </button>
                             <button
                               onClick={() => onClosePosition(pos.id, 'MANUAL_CLOSE')}

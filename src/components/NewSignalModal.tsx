@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Zap, X, TrendingUp, TrendingDown, DollarSign } from 'lucide-react';
+import { Zap, X, TrendingUp, TrendingDown, DollarSign, Clock, Copy, Check, ShieldAlert } from 'lucide-react';
 import { CoinMarket } from '../types';
 
 interface NewSignalModalProps {
   coins: CoinMarket[];
   isOpen: boolean;
   onClose: () => void;
-  onDispatch: (symbol: string, side: 'BUY' | 'SELL', price: number) => void;
+  onDispatch: (symbol: string, side: 'BUY' | 'SELL', price: number, durationMins?: number, isLossTrade?: boolean) => void;
 }
 
 export const NewSignalModal: React.FC<NewSignalModalProps> = ({
@@ -18,6 +18,9 @@ export const NewSignalModal: React.FC<NewSignalModalProps> = ({
   const [symbol, setSymbol] = useState('SOLUSDT');
   const [side, setSide] = useState<'BUY' | 'SELL'>('BUY');
   const [customPrice, setCustomPrice] = useState<string>('');
+  const [durationMins, setDurationMins] = useState<number>(60);
+  const [isLossTrade, setIsLossTrade] = useState<boolean>(false);
+  const [copied, setCopied] = useState<boolean>(false);
 
   if (!isOpen) return null;
 
@@ -25,15 +28,37 @@ export const NewSignalModal: React.FC<NewSignalModalProps> = ({
   const currentMarketPrice = selectedCoin?.price || 100.0;
   const executionPrice = customPrice ? parseFloat(customPrice) || currentMarketPrice : currentMarketPrice;
 
+  // Approximate math for preview
+  const previewMargin = 1.0;
+  const previewLev = 10;
+  const baseMovePct = 0.03; // 30% on margin @ 10x = 3%
+  const recoveryMovePct = isLossTrade ? 0.045 : 0.03;
+  const slMovePct = 0.027; // 27% on margin @ 10x = 2.7%
+
+  const previewTp = side === 'BUY' 
+    ? executionPrice * (1 + recoveryMovePct) 
+    : executionPrice * (1 - recoveryMovePct);
+  const previewSl = side === 'BUY'
+    ? executionPrice * (1 - slMovePct)
+    : executionPrice * (1 + slMovePct);
+
+  const previewCopyStr = `${symbol} TP: ${previewTp.toFixed(4)} SL: ${previewSl.toFixed(4)}`;
+
+  const handleCopyPreview = () => {
+    navigator.clipboard.writeText(previewCopyStr);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onDispatch(symbol, side, executionPrice);
+    onDispatch(symbol, side, executionPrice, durationMins, isLossTrade);
     onClose();
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-md w-full p-6 shadow-2xl space-y-5 animate-in fade-in duration-150">
+      <div className="bg-slate-900 border border-slate-800 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-4 animate-in fade-in duration-150 max-h-[90vh] overflow-y-auto">
         
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800 pb-3">
@@ -42,8 +67,8 @@ export const NewSignalModal: React.FC<NewSignalModalProps> = ({
               <Zap className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">Dispatch New Trade Signal</h3>
-              <p className="text-xs text-slate-400">Dispatches risk-calculated orders to all approved members</p>
+              <h3 className="text-base font-bold text-white">Dispatch Trade Signal</h3>
+              <p className="text-xs text-slate-400">Formatted per Trade Requirements (01, 02, 04, 05)</p>
             </div>
           </div>
           <button
@@ -57,6 +82,35 @@ export const NewSignalModal: React.FC<NewSignalModalProps> = ({
         {/* Form */}
         <form onSubmit={handleSubmit} className="space-y-4 text-xs">
           
+          {/* Trade Mode Toggle (01 vs 02) */}
+          <div className="bg-slate-950 p-2.5 rounded-lg border border-slate-800">
+            <label className="block text-slate-300 font-semibold mb-1.5">Trade Mode:</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setIsLossTrade(false)}
+                className={`py-2 px-3 rounded-lg font-bold border transition-all text-center ${
+                  !isLossTrade
+                    ? 'bg-emerald-600/90 border-emerald-500 text-white shadow-sm'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                01. Loss නැති Trade (Normal) 🟢
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsLossTrade(true)}
+                className={`py-2 px-3 rounded-lg font-bold border transition-all text-center ${
+                  isLossTrade
+                    ? 'bg-amber-600/90 border-amber-500 text-white shadow-sm'
+                    : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                }`}
+              >
+                02. Loss Trade (Recovery) 🩹
+              </button>
+            </div>
+          </div>
+
           {/* Symbol Select */}
           <div>
             <label className="block text-slate-300 font-medium mb-1.5">Target Coin Symbol:</label>
@@ -129,27 +183,65 @@ export const NewSignalModal: React.FC<NewSignalModalProps> = ({
             />
           </div>
 
-          {/* Math Preview & Active Trade Lock Notice */}
-          {selectedCoin?.hasActiveTrade ? (
-            <div className="p-3 bg-amber-950/70 border border-amber-800/80 rounded-lg text-amber-300 space-y-1 text-xs">
-              <div className="font-bold flex items-center gap-1.5 text-amber-200">
-                <span>🔒 කාසියේ ට්‍රේඩ් සීමාව (Trade Lock)</span>
-              </div>
-              <p>
-                <b>{symbol}</b> කාසිය සඳහා දැනටමත් Open Position එකක් පවතී ({selectedCoin.activeTradeSide}). මෙම ට්‍රේඩ් එක Close වන තුරු මෙම කාසියෙන් නව සිග්නල් සෙවීම හෝ නිකුත් කිරීම සම්පූර්ණයෙන්ම අත්හිටුවා ඇත.
-              </p>
+          {/* 04. Trade Duration Limit Selector */}
+          <div>
+            <label className="block text-slate-300 font-medium mb-1.5 flex items-center gap-1.5">
+              <Clock className="w-3.5 h-3.5 text-orange-400" />
+              <span>04. Trade Duration (කාල සීමාව):</span>
+            </label>
+            <div className="grid grid-cols-5 gap-1.5">
+              {[15, 30, 45, 60, 120].map((mins) => (
+                <button
+                  key={mins}
+                  type="button"
+                  onClick={() => setDurationMins(mins)}
+                  className={`py-1.5 rounded-md font-mono text-[11px] font-bold border transition-colors ${
+                    durationMins === mins
+                      ? 'bg-orange-600 border-orange-500 text-white'
+                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {mins}m
+                </button>
+              ))}
             </div>
-          ) : (
-            <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-lg text-slate-400 space-y-1">
-              <div className="font-semibold text-slate-300">Algorithmic Risk Engine Rules:</div>
-              <p>
-                • Personalized TP & SL calculated automatically based on each member's base margin & leverage.
-              </p>
-              <p>
-                • If member has an active loss pool, a partial recovery slice (up to $0.20 cap) is attached to the TP goal.
-              </p>
+            <p className="text-[10px] text-slate-400 mt-1">
+              කාලය අවසන් වූ විට ස්වයංක්‍රීයව "කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න." Alert එක යවනු ඇත.
+            </p>
+          </div>
+
+          {/* 05. Signal Output Preview & 1-Click Copy */}
+          <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-slate-200">Signal Message Preview:</span>
+              <button
+                type="button"
+                onClick={handleCopyPreview}
+                className="px-2 py-1 bg-indigo-900/80 hover:bg-indigo-800 text-indigo-300 border border-indigo-700/60 rounded text-[10px] flex items-center gap-1 transition-colors"
+                title="05. Copy Coin, TP, and SL"
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-3 h-3 text-emerald-400" />
+                    <span className="text-emerald-300 font-bold">Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-3 h-3" />
+                    <span>Copy (Coin+TP+SL)</span>
+                  </>
+                )}
+              </button>
             </div>
-          )}
+            <div className="bg-slate-900/90 p-2.5 rounded font-mono text-[11px] text-slate-300 space-y-0.5 border border-slate-800">
+              <div>💎 <b>Coin:</b> {symbol}</div>
+              <div>📈 <b>Direction:</b> {side === 'BUY' ? 'BUY / LONG 🟢' : 'SELL / SHORT 🔴'}</div>
+              <div>🎯 <b>Target Tp (full):</b> ${previewTp.toFixed(4)}</div>
+              <div>🛑 <b>Stop Loss:</b> ${previewSl.toFixed(4)}</div>
+              <div>⚙️ <b>Margin:</b> ${previewMargin.toFixed(2)} ({previewLev}x Lev)</div>
+              <div>⏱️ <b>Duration:</b> {durationMins} mins</div>
+            </div>
+          </div>
 
           {/* Submit */}
           <div className="flex items-center justify-end gap-2 pt-2">

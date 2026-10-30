@@ -36,21 +36,28 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
 
   const currentUser = users.find((u) => u.chat_id === selectedChatId) || users[0];
   const webhookUrl = `${window.location.origin}/webhook`;
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
 
   const quickCommands = [
+    { label: '🚀 01. Normal Signal', cmd: '/test_signal SOL normal', desc: '01. Loss නැති Trade Signal' },
+    { label: '🩹 02. Loss Signal', cmd: '/test_signal SOL loss', desc: '02. Loss Trade Signal' },
+    { label: '🛡️ 03. SL to Entry', cmd: '/be', desc: '03. Stop Loss එක Entry Point එකට ගැනීමේ පණිවිඩය' },
+    { label: '⏰ 04. Time Expired', cmd: '/timeout', desc: '04. කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න' },
+    { label: '📋 05. Copy Signal', cmd: '/copy', desc: '05. Coin, TP, SL එකවර කොපි කිරීම' },
     { label: '/status', cmd: '/status', desc: 'Current trades & loss pool' },
-    { label: '/test_signal', cmd: '/test_signal', desc: 'Dispatch immediate test signal' },
     { label: '/positions', cmd: '/positions', desc: 'Active trades list' },
     { label: '/whitelist', cmd: '/whitelist', desc: 'Whitelisted coins' },
     { label: '/help', cmd: '/help', desc: 'Full command guide' },
-    { label: '/start', cmd: '/start', desc: 'User registration' },
-    { label: '/my_off', cmd: '/my_off', desc: 'Pause personal signals' },
-    { label: '/my_on', cmd: '/my_on', desc: 'Resume personal signals' },
-    { label: '/bot_on', cmd: '/bot_on', desc: 'Admin: Start bot' },
-    { label: '/bot_off', cmd: '/bot_off', desc: 'Admin: Pause bot' },
-    { label: '/users', cmd: '/users', desc: 'Admin: Member list' },
-    { label: '/approve_all', cmd: '/approve_all', desc: 'Admin: Approve all users' },
   ];
+
+  const handleCopyFromMessage = (msgId: string, text: string) => {
+    // Extract code block or full text
+    const match = text.match(/<code>(.*?)<\/code>/);
+    const toCopy = match ? match[1].replace(/<[^>]*>?/gm, '') : text.replace(/<[^>]*>?/gm, '');
+    navigator.clipboard.writeText(toCopy);
+    setCopiedMsgId(msgId);
+    setTimeout(() => setCopiedMsgId(null), 2500);
+  };
 
   const handleSend = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -62,6 +69,16 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
       currentUser.full_name
     );
     setInputCommand('');
+  };
+
+  const triggerTestCommand = (cmd: string) => {
+    if (!currentUser) return;
+    onSendMessage(
+      currentUser.chat_id,
+      cmd,
+      currentUser.username,
+      currentUser.full_name
+    );
   };
 
   const handleCopyWebhook = () => {
@@ -90,7 +107,7 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-400">
-                Interactive Telegram bot simulation with Sinhala & English responses and inline buttons.
+                Interactive Telegram bot simulation with Sinhala & English trade signals per requirements.
               </p>
             </div>
           </div>
@@ -116,56 +133,82 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
         <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-950/60 font-sans">
           {messages.length === 0 ? (
             <div className="text-center py-12 text-slate-500 text-xs">
-              No messages yet. Send a command like <code className="text-rose-400">/status</code> or <code className="text-rose-400">/start</code> below.
+              No messages yet. Click one of the test buttons below or send <code className="text-rose-400">/test_signal</code>.
             </div>
           ) : (
-            messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex flex-col ${
-                  msg.is_from_bot ? 'items-start' : 'items-end'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mb-1 px-1">
-                  <span>{msg.sender_name}</span>
-                  <span>•</span>
-                  <span>{msg.timestamp}</span>
-                </div>
-
+            messages.map((msg) => {
+              const hasTradeInfo = msg.text.includes('Coin:') || msg.text.includes('Target Tp') || msg.text.includes('Stop Loss');
+              return (
                 <div
-                  className={`max-w-xl rounded-2xl px-4 py-3 text-xs leading-relaxed shadow-sm ${
-                    msg.is_from_bot
-                      ? 'bg-slate-800/90 text-slate-200 border border-slate-700/80 rounded-tl-sm'
-                      : 'bg-rose-600 text-white rounded-tr-sm'
+                  key={msg.id}
+                  className={`flex flex-col ${
+                    msg.is_from_bot ? 'items-start' : 'items-end'
                   }`}
                 >
-                  {/* HTML formatted message output */}
-                  <div
-                    dangerouslySetInnerHTML={{ __html: msg.text.replace(/\n/g, '<br/>') }}
-                    className="whitespace-pre-wrap font-sans space-y-1"
-                  />
+                  <div className="flex items-center gap-1.5 text-[11px] text-slate-500 mb-1 px-1">
+                    <span>{msg.sender_name}</span>
+                    <span>•</span>
+                    <span>{msg.timestamp}</span>
+                  </div>
 
-                  {/* Inline Buttons (Interactive callbacks) */}
-                  {msg.buttons && msg.buttons.length > 0 && (
-                    <div className="mt-3 pt-2.5 border-t border-slate-700/80 space-y-1.5">
-                      {msg.buttons.map((row, rIdx) => (
-                        <div key={rIdx} className="flex flex-wrap gap-1.5">
-                          {row.map((btn, bIdx) => (
-                            <button
-                              key={bIdx}
-                              onClick={() => onSendCallback(msg.chat_id, btn.callback_data)}
-                              className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 text-white rounded-lg text-[11px] font-semibold transition-colors border border-slate-600/70 shadow-sm flex items-center gap-1"
-                            >
-                              <span>{btn.text}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <div
+                    className={`max-w-xl rounded-2xl px-4 py-3 text-xs leading-relaxed shadow-sm relative group ${
+                      msg.is_from_bot
+                        ? 'bg-slate-800/90 text-slate-200 border border-slate-700/80 rounded-tl-sm'
+                        : 'bg-rose-600 text-white rounded-tr-sm'
+                    }`}
+                  >
+                    {/* HTML formatted message output */}
+                    <div
+                      dangerouslySetInnerHTML={{ __html: msg.text.replace(/\n/g, '<br/>') }}
+                      className="whitespace-pre-wrap font-sans space-y-1"
+                    />
+
+                    {/* 05. Quick Copy Button on Bot Trade Messages */}
+                    {msg.is_from_bot && hasTradeInfo && (
+                      <div className="mt-2.5 pt-2 border-t border-slate-700/60 flex items-center justify-between">
+                        <span className="text-[10px] text-slate-400">05. One-Click Copy</span>
+                        <button
+                          onClick={() => handleCopyFromMessage(msg.id, msg.text)}
+                          className="px-2.5 py-1 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 rounded text-[11px] flex items-center gap-1 font-mono transition-colors"
+                        >
+                          {copiedMsgId === msg.id ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-400" />
+                              <span className="text-emerald-300 font-bold">Copied!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>Copy (Coin + TP + SL)</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Inline Buttons (Interactive callbacks) */}
+                    {msg.buttons && msg.buttons.length > 0 && (
+                      <div className="mt-3 pt-2.5 border-t border-slate-700/80 space-y-1.5">
+                        {msg.buttons.map((row, rIdx) => (
+                          <div key={rIdx} className="flex flex-wrap gap-1.5">
+                            {row.map((btn, bIdx) => (
+                              <button
+                                key={bIdx}
+                                onClick={() => onSendCallback(msg.chat_id, btn.callback_data)}
+                                className="px-3 py-1.5 bg-slate-700/80 hover:bg-slate-600 text-white rounded-lg text-[11px] font-semibold transition-colors border border-slate-600/70 shadow-sm flex items-center gap-1"
+                              >
+                                <span>{btn.text}</span>
+                              </button>
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
@@ -200,7 +243,7 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
         <form onSubmit={handleSend} className="p-3 bg-slate-950 border-t border-slate-800 flex items-center gap-2">
           <input
             type="text"
-            placeholder={`Type Telegram command as ${currentUser?.full_name || 'Member'} (e.g. /status, /skip 139)...`}
+            placeholder={`Type Telegram command as ${currentUser?.full_name || 'Member'} (e.g. /status, /be, /timeout, /copy)...`}
             value={inputCommand}
             onChange={(e) => setInputCommand(e.target.value)}
             className="flex-1 px-3 py-2 text-xs bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 font-mono"
@@ -216,9 +259,102 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
 
       </div>
 
-      {/* Right Col: Webhook & Integration Information */}
+      {/* Right Col: 5 Requirements Verification & Webhook Setup */}
       <div className="space-y-6">
         
+        {/* 🎯 Interactive Verification Panel for the 5 Requirements */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
+          <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+            <Sparkles className="w-5 h-5 text-amber-400" />
+            <div>
+              <h3 className="text-sm font-bold text-white">5 Requirements Quick Verification</h3>
+              <p className="text-[11px] text-slate-400">පහත බොත්තම් මඟින් ගැටලු 5 ක්ෂණිකව පරීක්ෂා කරන්න</p>
+            </div>
+          </div>
+
+          <div className="space-y-2.5">
+            {/* 01. Non-Loss Signal */}
+            <button
+              onClick={() => triggerTestCommand('/test_signal SOL normal')}
+              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-emerald-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
+            >
+              <span className="px-1.5 py-0.5 bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px] font-bold rounded mt-0.5">01</span>
+              <div>
+                <div className="text-xs font-bold text-emerald-300 group-hover:text-emerald-200">
+                  Loss නැති Trade එකක් සදහා
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Coin, Direction, Target Tp (full), Stop Loss, Margin
+                </div>
+              </div>
+            </button>
+
+            {/* 02. Loss Trade Signal */}
+            <button
+              onClick={() => triggerTestCommand('/test_signal SOL loss')}
+              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-amber-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
+            >
+              <span className="px-1.5 py-0.5 bg-amber-950 text-amber-400 border border-amber-800 text-[10px] font-bold rounded mt-0.5">02</span>
+              <div>
+                <div className="text-xs font-bold text-amber-300 group-hover:text-amber-200">
+                  Loss Trade එකක් සදහා
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Coin, Direction, Target Tp (full), Stop Loss, Margin
+                </div>
+              </div>
+            </button>
+
+            {/* 03. Stop Loss to Entry Point */}
+            <button
+              onClick={() => triggerTestCommand('/be')}
+              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-blue-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
+            >
+              <span className="px-1.5 py-0.5 bg-blue-950 text-blue-400 border border-blue-800 text-[10px] font-bold rounded mt-0.5">03</span>
+              <div>
+                <div className="text-xs font-bold text-blue-300 group-hover:text-blue-200">
+                  Stop Loss එක Entry Point එකට ගන්න
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Coin, Entry Price, "Stop Loss එක ඉහත අගයට වෙනස් කරන්න"
+                </div>
+              </div>
+            </button>
+
+            {/* 04. Time Expired Alert */}
+            <button
+              onClick={() => triggerTestCommand('/timeout')}
+              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-orange-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
+            >
+              <span className="px-1.5 py-0.5 bg-orange-950 text-orange-400 border border-orange-800 text-[10px] font-bold rounded mt-0.5">04</span>
+              <div>
+                <div className="text-xs font-bold text-orange-300 group-hover:text-orange-200">
+                  ලබාදී ඇති කාලය අවසන් වූ විට
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Coin, "කාසියට ලබාදී ඇති කාලය අවසන් close කරන්න."
+                </div>
+              </div>
+            </button>
+
+            {/* 05. Copy Signal */}
+            <button
+              onClick={() => triggerTestCommand('/copy')}
+              className="w-full p-2.5 bg-slate-950 hover:bg-slate-800/80 border border-purple-900/60 rounded-lg text-left transition-all flex items-start gap-2.5 group"
+            >
+              <span className="px-1.5 py-0.5 bg-purple-950 text-purple-400 border border-purple-800 text-[10px] font-bold rounded mt-0.5">05</span>
+              <div>
+                <div className="text-xs font-bold text-purple-300 group-hover:text-purple-200">
+                  Coin, TP, SL අගයන් එක පාරින් Copy
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Single-tap code block & copy button for immediate clipboard use
+                </div>
+              </div>
+            </button>
+          </div>
+        </div>
+
         {/* Real Webhook URL Configuration */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
@@ -249,35 +385,6 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
             <code className="block bg-slate-900 p-2 rounded text-[10px] text-emerald-400 overflow-x-auto whitespace-pre font-mono">
               curl -F "url={webhookUrl}" https://api.telegram.org/bot&lt;YOUR_TELEGRAM_TOKEN&gt;/setWebhook
             </code>
-          </div>
-        </div>
-
-        {/* Telegram Inline Button Architecture Explained */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm space-y-3">
-          <h3 className="text-sm font-bold text-white flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            <span>Loss Recovery Telegram Mechanics</span>
-          </h3>
-
-          <div className="space-y-2.5 text-xs text-slate-300">
-            <div className="flex items-start gap-2">
-              <span className="font-bold text-amber-400">1.</span>
-              <p>
-                <b>Skip Trade & Refund:</b> If a user cannot take a trade on Binance or misses the signal, clicking <i>[🚫 Skip Trade]</i> releases the trade slot and instantly refunds the attached loss portion back into their Global Loss Pool.
-              </p>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="font-bold text-emerald-400">2.</span>
-              <p>
-                <b>Take Profit (TP):</b> When a trade reaches TP, the attached loss is marked as recovered, incrementing the user's recovery step counter.
-              </p>
-            </div>
-            <div className="flex items-start gap-2">
-              <span className="font-bold text-rose-400">3.</span>
-              <p>
-                <b>Stop Loss (SL):</b> If SL is hit, the margin risk deficit is accumulated into the loss pool and recovered incrementally across subsequent signals.
-              </p>
-            </div>
           </div>
         </div>
 
