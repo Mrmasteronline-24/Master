@@ -1289,20 +1289,26 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
 function handleTelegramCommand(chatId: string, username: string, fullName: string, text: string): TelegramMessage {
   const tokens = text.trim().split(/\s+/);
   const cmd = tokens[0].toLowerCase().replace('/', '');
+  // If admin_chat_id is placeholder or unconfigured, auto-claim admin on first real interaction
+  if (botConfig.admin_chat_id === '1088492011' || !botConfig.admin_chat_id) {
+    botConfig.admin_chat_id = chatId;
+    console.log(`👑 [Telegram Engine] Auto-assigned Master Admin to Chat ID: ${chatId}`);
+  }
+
   const isAdmin = chatId === botConfig.admin_chat_id;
 
   // Ensure user exists or auto-register
   let user = users.get(chatId);
-  const isTargetAdmin = chatId === botConfig.admin_chat_id || (isAdmin && user?.is_admin === 1);
-  const shouldAutoApprove = botConfig.auto_approve_users !== false || isTargetAdmin;
+  const isTargetAdmin = isAdmin || (user?.is_admin === 1);
+  const shouldAutoApprove = true;
 
   if (!user) {
     user = {
       chat_id: chatId,
       full_name: fullName || 'New Member',
       username: username || 'user',
-      is_approved: shouldAutoApprove ? 1 : 0,
-      is_active: shouldAutoApprove ? 1 : 0,
+      is_approved: 1,
+      is_active: 1,
       is_admin: isTargetAdmin ? 1 : 0,
       base_margin: 0.8,
       leverage: 10,
@@ -1328,10 +1334,8 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
     if (fullName) user.full_name = fullName;
     if (username) user.username = username;
     if (isTargetAdmin) user.is_admin = 1;
-    if (shouldAutoApprove && user.is_approved === 0) {
-      user.is_approved = 1;
-      user.is_active = 1;
-    }
+    user.is_approved = 1;
+    user.is_active = 1;
   }
 
   let replyText = '';
