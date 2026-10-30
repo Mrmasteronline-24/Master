@@ -1038,12 +1038,21 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
 
     // Generate Telegram Dispatch Message (Sinhala & English matching main.py)
     const directionBadge = side === 'BUY' ? 'BUY / LONG 🟢' : 'SELL / SHORT 🔴';
-    const recoveryTxt = pendingLossToAdd > 0
-      ? `\n🩹 <b>Loss Recovery Attached:</b> +$${pendingLossToAdd.toFixed(4)}` +
-        `\n⚡ <b>Base TP (BE Trigger):</b> $${baseTpPrice.toFixed(4)}` +
-        `\n🎯 <b>Full Recovery TP:</b> $${recoveryTpPrice.toFixed(4)}` +
-        `\n\n💡 <i>සටහන: මිල Base TP ($${baseTpPrice.toFixed(4)}) වෙත ළඟා වූ පසු SL එක Entry Price ($${currentPrice.toFixed(4)}) වෙත ගෙන යන ලෙස (Breakeven - BE) ක්ෂණික Alert එකක් ලැබෙනු ඇත.</i>`
-      : `\n🎯 <b>Target TP:</b> $${baseTpPrice.toFixed(4)}`;
+
+    let tpSection = '';
+    let recoveryFooter = '';
+
+    if (pendingLossToAdd > 0) {
+      tpSection =
+        `🎯 <b>Target TP (Full):</b> $${recoveryTpPrice.toFixed(4)}\n` +
+        `⚡ <b>Base TP (BE Trigger):</b> $${baseTpPrice.toFixed(4)}\n`;
+      recoveryFooter =
+        `\n🩹 <b>Loss Recovery:</b> +$${pendingLossToAdd.toFixed(4)} (Step ${u.loss_recovery_step + 1})\n` +
+        `💡 <i>මිල Base TP ($${baseTpPrice.toFixed(4)}) වෙත ළඟා වූ පසු SL එක Entry Price ($${currentPrice.toFixed(4)}) වෙත ගන්නා ලෙස (Breakeven) Alert එකක් ලැබෙනු ඇත.</i>`;
+    } else {
+      tpSection = `🎯 <b>Take Profit (TP):</b> $${baseTpPrice.toFixed(4)}\n`;
+      recoveryFooter = `\nSinhala: <i>සිග්නල් එක ක්‍රියාත්මක විය. සාමාන්‍ය ලාභ ඉලක්කය ක්‍රියාත්මකයි.</i>`;
+    }
 
     const dispatchMsg: TelegramMessage = {
       id: `sig-${Date.now()}-${u.chat_id}`,
@@ -1055,12 +1064,10 @@ function dispatchTradeToUsers(symbol: string, side: 'BUY' | 'SELL', currentPrice
         `💎 <b>Coin:</b> <code>${symbol}</code>\n` +
         `📈 <b>Direction:</b> ${directionBadge}\n` +
         `💵 <b>Entry Price:</b> $${currentPrice.toFixed(4)}\n` +
-        (pendingLossToAdd > 0 
-          ? `🎯 <b>Target TP (Full):</b> $${recoveryTpPrice.toFixed(4)}\n⚡ <b>Base TP (BE Trigger):</b> $${baseTpPrice.toFixed(4)}\n`
-          : `🎯 <b>Target TP:</b> $${baseTpPrice.toFixed(4)}\n`) +
+        tpSection +
         `🛑 <b>Stop Loss:</b> $${initialSl.toFixed(4)}\n` +
-        `⚙️ <b>Margin:</b> $${margin.toFixed(2)} (${leverage}x Lev)${recoveryTxt}\n\n` +
-        `Sinhala: <i>සිග්නල් එක ක්‍රියාත්මක විය. පාඩුව පියවීමේ පියවර අංක ${u.loss_recovery_step + 1} ක්‍රියාත්මකයි.</i>`,
+        `⚙️ <b>Margin:</b> $${margin.toFixed(2)} (${leverage}x Lev)\n` +
+        recoveryFooter,
       buttons: [
         [
           { text: '🚫 Skip Trade & Refund', callback_data: `skip_trade:${sigNum}` },
