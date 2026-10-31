@@ -1374,7 +1374,7 @@ function getAdminStatusDashboard(): string {
   const totalLossRecovered = Array.from(users.values()).reduce((sum, u) => sum + (u.global_loss_completed || 0), 0);
   const whitelistArray = Array.from(whitelist).sort();
 
-  let activeTradesText = '  ';
+  let activeTradesText = '   •)))';
   if (openPos.length > 0) {
     activeTradesText = openPos
       .map(
@@ -1520,7 +1520,11 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       break;
 
     case 'status':
-    case 'admin_status': {
+    case 'admin_status':
+    case 'default':
+    case 'defaults':
+    case 'default_setting':
+    case 'default_settings': {
       if (isAdmin || isTargetAdmin || user.is_admin === 1 || users.size <= 1) {
         replyText = getAdminStatusDashboard();
       } else {

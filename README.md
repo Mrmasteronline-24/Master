@@ -36,7 +36,7 @@
 14. Complete Loss Pool අගය (Recovered): $0.00
 
 15. Active Trade ගණන (0 / 10):
-  
+   •)))
 
 
 16. Whitelist Coin ගණන (51):
