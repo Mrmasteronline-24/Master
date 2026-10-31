@@ -1344,6 +1344,7 @@ function dispatchTradeToUsers(
       recoveryTpPrice = currentPrice * (1.0 - requiredMovePct);
     }
 
+    u.is_muted = 0; // Fresh signal: unmute so new reminders function until /ok is sent
     const newPos: UserPosition = {
       id: nextPositionId++,
       chat_id: u.chat_id,
@@ -1505,7 +1506,9 @@ function getAdminStatusDashboard(): string {
 
 function handleTelegramCommand(chatId: string, username: string, fullName: string, text: string): TelegramMessage {
   const tokens = text.trim().split(/\s+/);
-  const cmd = tokens[0].toLowerCase().replace('/', '');
+  // Strip leading slash or exclamation and remove @bot_username suffix (e.g. /ok@RedBullBot -> ok)
+  const rawCmd = tokens[0].toLowerCase().replace(/^[\/!]/, '');
+  const cmd = rawCmd.split('@')[0];
   // If admin_chat_id is placeholder or unconfigured, auto-claim admin on first real interaction
   if (botConfig.admin_chat_id === '1088492011' || !botConfig.admin_chat_id) {
     botConfig.admin_chat_id = chatId;
@@ -2579,14 +2582,24 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
     // 08. Reminder එක /Ok කලපසු ලැබෙන alert එක
     case 'ok':
     case 'mute': {
+      const targetSigStr = tokens[1];
+      const targetSigNum = targetSigStr ? parseInt(targetSigStr.replace(/[^0-9]/g, ''), 10) : NaN;
+      let mutedCount = 0;
+
       positions.forEach((p) => {
-        if (p.chat_id === chatId) {
-          p.reminders_sent = 999;
-          p.reminders_auto_stopped = true;
+        const isUserMatch = String(p.chat_id) === String(chatId) || (isAdmin && p.is_open === 1);
+        if (isUserMatch && p.is_open === 1) {
+          if (isNaN(targetSigNum) || p.signal_num === targetSigNum) {
+            p.reminders_sent = 999;
+            p.reminders_auto_stopped = true;
+            mutedCount++;
+          }
         }
       });
       if (user) user.is_muted = 1;
-      replyText = '✅ Reminder alerts mute කරන ලදී!';
+      replyText = '✅ <b>Reminder alerts mute කරන ලදී!</b> 🔕\n\n' +
+        '• මෙම Trade එක සඳහා Reminder Alerts සාර්ථකව අක්‍රිය කරන ලදී.\n' +
+        '• Take Profit (TP) හෝ Stop Loss (SL) වැදුනු විට Exit Alert එක සාමාන්‍ය පරිදි ලැබෙනු ඇත.';
       break;
     }
 
@@ -2686,7 +2699,7 @@ function handleCallbackQuery(chatId: string, data: string): { success: boolean; 
     const targetSig = data.split(':')[1];
     if (targetSig === 'all') {
       positions.forEach((p) => {
-        if (p.chat_id === chatId) {
+        if (String(p.chat_id) === String(chatId) || isAdmin) {
           p.reminders_sent = 999;
           p.reminders_auto_stopped = true;
         }
@@ -2694,11 +2707,13 @@ function handleCallbackQuery(chatId: string, data: string): { success: boolean; 
       if (user) user.is_muted = 1;
     } else {
       const sig = parseInt(targetSig, 10);
-      const pos = positions.find((p) => p.chat_id === chatId && p.signal_num === sig);
-      if (pos) {
-        pos.reminders_sent = 999;
-        pos.reminders_auto_stopped = true;
-      }
+      positions.forEach((p) => {
+        if ((String(p.chat_id) === String(chatId) || isAdmin) && (p.signal_num === sig || isNaN(sig))) {
+          p.reminders_sent = 999;
+          p.reminders_auto_stopped = true;
+        }
+      });
+      if (user) user.is_muted = 1;
     }
 
     const muteMsg: TelegramMessage = {
