@@ -46,6 +46,8 @@ export const TelegramSimulatorTab: React.FC<TelegramSimulatorTabProps> = ({
     { label: '05. Final Report', cmd: '/report', desc: '05. දවස අවසානයේ එන Final Report එක' },
     { label: '08. /ok (Mute)', cmd: '/ok', desc: '08. Reminder alerts mute කරන ලදී' },
     { label: '/status', cmd: '/status', desc: 'Current trades & loss pool' },
+    { label: '/wait_on', cmd: '/wait_on', desc: 'Wait Mode On (Losses counted separately & reminders muted)' },
+    { label: '/wait_off', cmd: '/wait_off', desc: 'Wait Mode Off (Resume normal)' },
     { label: '/positions', cmd: '/positions', desc: 'Active trades list' },
     { label: '/whitelist', cmd: '/whitelist', desc: 'Whitelisted coins' },
     { label: '/help', cmd: '/help', desc: 'Full command guide' },

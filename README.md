@@ -7,6 +7,8 @@
 • `/retune` : Normal (Inverted) සහ Trend-Following අතර මාරු වේ.
 • `/toggle_paper` : Paper Trading සහ Real Binance අතර මාරු වේ.
 • `/status` : පද්ධතියේ සම්පූර්ණ තත්ත්වය පෙන්වයි (Mr. Master Admin Status Dashboard).
+• `/wait_on` : සිග්නල් බැලීමට/trade දැමීමට නොහැකි විට සක්‍රිය කර Loss අගය වෙනම ගණනය කරයි & Reminders නවතයි.
+• `/wait_off` : Wait Mode අක්‍රිය කර සාමාන්‍ය තත්වයට පත් කරයි.
 • `/skip` : විවෘත ට්රේඩ් එකක් මඟහැර Attached Loss එක නැවත Refund කරයි.
 • `/max_trade` : උපරිම trade ගණන.
 

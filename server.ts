@@ -272,6 +272,8 @@ users.set(defaultAdminChatId, {
   user_end_minute: 59,
   user_custom_time_enabled: 0,
   is_muted: 0,
+  is_waiting_mode: 0,
+  wait_loss_pool: 0.0,
   global_loss_pool: 0.0,
   global_loss_completed: 0.0,
   loss_recovery_step: 0,
@@ -985,6 +987,8 @@ async function initTelegramBotEngine(): Promise<void> {
               { command: 'toggle_paper', description: '📝 Paper Trading & Real Binance මාරු වේ' },
               { command: 'skip', description: '⏭️ ට්‍රේඩ් එකක් මඟහැර Loss Refund කරයි' },
               { command: 'max_trade', description: '🔢 උපරිම trade ගණන' },
+              { command: 'wait_on', description: '🟡 Busy/Wait mode (Losses tracked separately & reminders muted)' },
+              { command: 'wait_off', description: '🟢 Deactivate Wait mode & resume normal trading' },
               { command: 'auto_scan', description: '🔍 Binance $0.80 Margin හොඳම Altcoins Scan' },
               { command: 'sync_coins', description: '🔄 Binance Futures සක්‍රීය කාසි කියවයි' },
               { command: 'fwl_default', description: '🪙 මූලික කාසි 50 Whitelist කරයි' },
@@ -1297,10 +1301,12 @@ function dispatchTradeToUsers(
       signal_num: sigNum,
       opened_at: Date.now(),
       is_open: 1,
-      reminders_sent: 0,
+      reminders_sent: u.is_waiting_mode === 1 ? 999 : 0,
+      reminders_auto_stopped: u.is_waiting_mode === 1 ? true : false,
       be_alert_sent: false,
       duration_mins: tradeDuration,
       timeout_alert_sent: false,
+      is_wait_mode_trade: u.is_waiting_mode === 1,
     };
 
     positions.unshift(newPos);
@@ -1473,6 +1479,8 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       user_end_minute: 59,
       user_custom_time_enabled: 0,
       is_muted: 0,
+      is_waiting_mode: 0,
+      wait_loss_pool: 0.0,
       global_loss_pool: 0.0,
       global_loss_completed: 0.0,
       loss_recovery_step: 0,
@@ -1607,6 +1615,50 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       user.is_active = 1;
       replyText = '🟢 <b>ඔබගේ Trade Signals සාර්ථකව නැවත ක්‍රියාත්මක කරන ලදී!</b>';
       break;
+
+    case 'wait_on':
+    case 'waiton': {
+      user.is_waiting_mode = 1;
+      if (user.wait_loss_pool === undefined) user.wait_loss_pool = 0.0;
+      positions.forEach((p) => {
+        if (p.chat_id === chatId && p.is_open === 1) {
+          p.reminders_sent = 999;
+          p.reminders_auto_stopped = true;
+          p.is_wait_mode_trade = true;
+        }
+      });
+      replyText = `⏸️ <b>WAIT MODE සක්‍රීය කරන ලදී (/wait_on)! 🟡</b>\n\n` +
+        `• <b>තත්වය:</b> WAIT / BUSY MODE ACTIVE 🔕\n` +
+        `• ඔබට සිග්නල් බැලීමට හෝ Trade කිරීමට නොහැකි බැවින් <b>Reminder Alerts අක්‍රිය කර ඇත.</b>\n` +
+        `• මෙම කාලය තුළ පැමිණෙන සිග්නල් Loss වුවහොත්, එම Loss අගය සාමාන්‍ය Pool එකට එකතු නොවී <b>වෙනම Wait Loss Pool එකක් ලෙස</b> ගණනය වේ.\n` +
+        `• <b>වෙන්වූ Wait Loss Pool අගය:</b> $${(user.wait_loss_pool || 0).toFixed(4)}\n\n` +
+        `<i>නැවත සාමාන්‍ය තත්වයට හැරවීමට <b>/wait_off</b> භාවිතා කරන්න.</i>`;
+      buttons = [
+        [
+          { text: '▶️ Turn Wait OFF (/wait_off)', callback_data: 'cmd_wait_off' },
+          { text: '📊 Status', callback_data: 'my_status' },
+        ],
+      ];
+      break;
+    }
+
+    case 'wait_off':
+    case 'waitoff': {
+      user.is_waiting_mode = 0;
+      const recordedLoss = user.wait_loss_pool || 0.0;
+      replyText = `▶️ <b>WAIT MODE අක්‍රිය කරන ලදී (/wait_off)! 🟢</b>\n\n` +
+        `• <b>තත්වය:</b> NORMAL TRADING MODE ACTIVE 🔔\n` +
+        `• Reminder Alerts නැවත සාමාන්‍ය පරිදි ක්‍රියාත්මක වේ.\n` +
+        `• Wait Mode කාලය තුළ වෙනම ගණනය වූ සම්පූර්ණ Loss අගය: <b>$${recordedLoss.toFixed(4)}</b>\n\n` +
+        `<i>පද්ධතියේ තත්වය බැලීමට <b>/status</b> භාවිතා කරන්න.</i>`;
+      buttons = [
+        [
+          { text: '⏸️ Turn Wait ON (/wait_on)', callback_data: 'cmd_wait_on' },
+          { text: '📊 Status', callback_data: 'my_status' },
+        ],
+      ];
+      break;
+    }
 
     case 'users':
       if (!isAdmin) {
@@ -2292,6 +2344,8 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
         `• /retune : Normal (Inverted) සහ Trend-Following අතර මාරු වේ.\n` +
         `• /toggle_paper : Paper Trading සහ Real Binance අතර මාරු වේ.\n` +
         `• /status : පද්ධතියේ සම්පූර්ණ තත්ත්වය පෙන්වයි.\n` +
+        `• /wait_on : Trade දැමීමට නොහැකි විට Loss වෙනම Count කර Reminder Mute කරයි.\n` +
+        `• /wait_off : Wait Mode අක්‍රිය කර සාමාන්‍ය තත්වයට පත් කරයි.\n` +
         `• /skip : විවෘත ට්රේඩ් එකක් මඟහැර Attached Loss එක නැවත Refund කරයි.\n` +
         `• /max_trade : උපරිම trade ගණන.\n\n` +
         `<b>2. Smart Scanner & කාසි පාලනය (Market & Coins):</b>\n` +
@@ -2337,6 +2391,10 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
         [
           { text: '🟢 Bot ON', callback_data: 'cmd_bot_on' },
           { text: '⏸️ Bot OFF', callback_data: 'cmd_bot_off' },
+        ],
+        [
+          { text: '🟡 Wait ON', callback_data: 'cmd_wait_on' },
+          { text: '⚪ Wait OFF', callback_data: 'cmd_wait_off' },
         ],
         [
           { text: '📊 Status', callback_data: 'my_status' },
@@ -2687,6 +2745,14 @@ function handleCallbackQuery(chatId: string, data: string): { success: boolean; 
     handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/bot_off');
     return { success: true, message: 'Bot paused' };
   }
+  if (data === 'cmd_wait_on') {
+    handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/wait_on');
+    return { success: true, message: 'Wait mode activated' };
+  }
+  if (data === 'cmd_wait_off') {
+    handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/wait_off');
+    return { success: true, message: 'Wait mode deactivated' };
+  }
   if (data === 'cmd_fwl_default') {
     handleTelegramCommand(chatId, user?.username || 'user', user?.full_name || 'Member', '/fwl_default');
     return { success: true, message: 'Default coins restored' };
@@ -2764,7 +2830,7 @@ function updatePositionsLivePrices() {
     const reminderMinute = Math.floor(elapsedMins);
     if (reminderMinute >= 1 && reminderMinute <= 10 && pos.reminders_sent < reminderMinute && !pos.reminders_auto_stopped) {
       const u = users.get(pos.chat_id);
-      if (u && u.is_muted !== 1) {
+      if (u && u.is_muted !== 1 && u.is_waiting_mode !== 1 && !pos.is_wait_mode_trade) {
         pos.reminders_sent = reminderMinute;
         sendSignalReminderAlert(pos, reminderMinute);
       }
@@ -2774,15 +2840,18 @@ function updatePositionsLivePrices() {
     if (!pos.reminders_auto_stopped && elapsedMins >= 10) {
       pos.reminders_auto_stopped = true;
       pos.reminders_sent = 999;
-      broadcastTelegramAlert({
-        id: `rem-stop-${Date.now()}-${pos.id}`,
-        timestamp: new Date().toLocaleTimeString(),
-        chat_id: pos.chat_id,
-        sender_name: 'RedBull Master Bot',
-        is_from_bot: true,
-        text: `ℹ️ <b>REMINDER AUTO-STOPPED (#${pos.signal_num})</b> 🔕\n\n` +
-          `📍 Coin: <b>${pos.symbol}</b> සඳහා විනාඩි 10 ක් සම්පූර්ණ වූ බැවින් මතක් කිරීම් නතර කරන ලදී.`,
-      });
+      const u = users.get(pos.chat_id);
+      if (u && u.is_waiting_mode !== 1 && !pos.is_wait_mode_trade) {
+        broadcastTelegramAlert({
+          id: `rem-stop-${Date.now()}-${pos.id}`,
+          timestamp: new Date().toLocaleTimeString(),
+          chat_id: pos.chat_id,
+          sender_name: 'RedBull Master Bot',
+          is_from_bot: true,
+          text: `ℹ️ <b>REMINDER AUTO-STOPPED (#${pos.signal_num})</b> 🔕\n\n` +
+            `📍 Coin: <b>${pos.symbol}</b> සඳහා විනාඩි 10 ක් සම්පූර්ණ වූ බැවින් මතක් කිරීම් නතර කරන ලදී.`,
+        });
+      }
     }
 
     if (pos.side === 'BUY') {
@@ -2859,9 +2928,17 @@ function closePosition(positionId: number, reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL
         (pos.attached_loss > 0 ? `\n🩹 <b>Loss Recovered:</b> +$${pos.attached_loss.toFixed(4)}` : ''),
     });
   } else if (reason === 'SL_HIT') {
-    // Stop loss hit -> attached loss + margin SL added back to user's loss pool
+    // Stop loss hit
     const lossAmount = pos.margin * (user.margin_sl_pct / 100.0);
-    user.global_loss_pool += lossAmount + pos.attached_loss;
+    const totalTradeLoss = lossAmount + pos.attached_loss;
+
+    const isWaitTrade = Boolean(pos.is_wait_mode_trade || user.is_waiting_mode === 1);
+    if (isWaitTrade) {
+      // සිග්නල් බැලීමට හා trade දැමීමට නොහැකි වන අවස්ථාවක පැමිණෙන සිග්නල් loss වුනොත් එහි loss අගය වෙනම count වේ
+      user.wait_loss_pool = Number(((user.wait_loss_pool || 0) + totalTradeLoss).toFixed(4));
+    } else {
+      user.global_loss_pool += totalTradeLoss;
+    }
 
     // Record trade history for Final Performance Report (Alert 05)
     tradeHistory.push({
@@ -2875,6 +2952,12 @@ function closePosition(positionId: number, reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL
       dateStr: todayStr,
     });
 
+    const waitModeNote = isWaitTrade
+      ? `\n⏸️ <b>Wait Mode Loss (වෙනම Count කළ Loss එක):</b> -$${totalTradeLoss.toFixed(4)}\n📊 <b>Total Wait Loss Pool:</b> $${(user.wait_loss_pool || 0).toFixed(4)}`
+      : `\n🩸 <b>New Loss Pool:</b> $${user.global_loss_pool.toFixed(4)}`;
+
+    const sigLabel = pos.signal_num < 10 ? `0${pos.signal_num}` : String(pos.signal_num);
+
     // 07. Stop Loss Alert එක
     broadcastTelegramAlert({
       id: `sl-${Date.now()}`,
@@ -2882,11 +2965,11 @@ function closePosition(positionId: number, reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL
       chat_id: pos.chat_id,
       sender_name: 'RedBull Master Bot',
       is_from_bot: true,
-      text: `🛑 <b>STOP LOSS HIT (#${pos.signal_num})! 🔴</b>\n\n` +
+      text: `🛑 <b>STOP LOSS HIT (#${sigLabel})! 🔴</b>\n\n` +
         `📍 <b>Coin:</b> ${pos.symbol} | <b>Side:</b> ${pos.side}\n` +
         `💸 <b>Loss Amount:</b> -$${lossAmount.toFixed(4)}\n` +
-        `🏁 <b>Exit Price:</b> ${formatPrice(exitPrice)}\n` +
-        `🩸 <b>New Loss Pool:</b> $${user.global_loss_pool.toFixed(4)}`,
+        `🏁 <b>Exit Price:</b> ${formatPrice(exitPrice)}` +
+        waitModeNote,
     });
 
     // Track consecutive coin losses

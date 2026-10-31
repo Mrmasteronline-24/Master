@@ -18,6 +18,8 @@ export interface User {
   user_end_minute: number;
   user_custom_time_enabled: number;
   is_muted: number;
+  is_waiting_mode?: number;
+  wait_loss_pool?: number;
   global_loss_pool: number;
   global_loss_completed: number;
   loss_recovery_step: number;
@@ -48,6 +50,7 @@ export interface UserPosition {
   duration_mins?: number; // Allocated trade time in minutes (e.g. 60m)
   timeout_alert_sent?: boolean; // True once time expired message is sent
   reminders_auto_stopped?: boolean; // True once 10 min reminder auto-stopped alert is sent
+  is_wait_mode_trade?: boolean; // True if opened while user was in /wait_on mode
   pnl?: number;
   pnl_pct?: number;
   closed_at?: number;
