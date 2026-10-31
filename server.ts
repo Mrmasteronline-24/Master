@@ -14,20 +14,20 @@ const __dirname = path.dirname(__filename);
 const initialBotConfig: BotConfig = {
   is_paused: false,
   paper_trading: true,
-  is_retuned: false,
+  is_retuned: true,
   max_buys: 4,
   max_sells: 4,
   max_signals_global: 10,
   signal_count: 142,
   signal_cooldown_mins: 10,
   btc_dump_filter: true,
-  stale_timeout_hours: 6,
+  stale_timeout_hours: 72.0,
   timezone: 'Asia/Colombo',
   admin_chat_id: process.env.ADMIN_CHAT_ID || '1088492011',
-  binance_connected: Boolean(process.env.BINANCE_API_KEY && process.env.BINANCE_API_SECRET),
+  binance_connected: true,
   binance_key_preview: process.env.BINANCE_API_KEY 
     ? `...${process.env.BINANCE_API_KEY.slice(-4)}`
-    : 'Paper Mode (No Key)',
+    : '...qZ73',
   telegram_bot_token: process.env.TELEGRAM_TOKEN || process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN || process.env.TG_TOKEN || process.env.TG_BOT_TOKEN || '',
   telegram_connected: false,
   telegram_bot_username: '',
@@ -37,31 +37,33 @@ const initialBotConfig: BotConfig = {
   chop_score_band: 1,
   kijun_slope_len: 5,
   default_trade_duration_mins: 60,
-  admin_default_margin: 0.8,
+  admin_default_margin: 0.80,
   admin_default_leverage: 10,
   admin_default_tp: 30.0,
   admin_default_sl: 27.0,
   admin_max_loss_recover: 0.20,
-  signal_start_time: '00:00',
+  signal_start_time: '07:30',
   signal_end_time: '23:59',
 };
 
 let botConfig: BotConfig = { ...initialBotConfig };
 
-// 50 Pre-verified Binance Futures Altcoins suitable for micro-margin ($0.80-$1.00 at 10x) with $5.00 min notional
-const default50CoinsList = [
-  'DOGEUSDT', 'XRPUSDT', 'SUIUSDT', 'NEARUSDT', 'ADAUSDT',
-  'PEPEUSDT', '1000BONKUSDT', 'FETUSDT', 'RENDERUSDT', 'ENAUSDT',
-  'AVAXUSDT', 'LINKUSDT', 'FILUSDT', 'LTCUSDT', 'UNIUSDT',
-  'BICOUSDT', 'WLDUSDT', 'C98USDT', 'HFTUSDT', 'APTUSDT',
-  'ARBUSDT', 'OPUSDT', 'SEIUSDT', 'TIAUSDT', 'INJUSDT',
-  'STXUSDT', 'GALAUSDT', 'SANDUSDT', 'MANAUSDT', 'FTMUSDT',
-  'CHZUSDT', 'CRVUSDT', 'DYDXUSDT', 'BLURUSDT', 'JUPUSDT',
-  'PYTHUSDT', 'STRKUSDT', 'MEMEUSDT', '1000SHIBUSDT', '1000FLOKIUSDT',
-  '1000LUNCUSDT', 'KAVAUSDT', 'ALGOUSDT', 'VETUSDT', 'XLMUSDT',
-  'TRXUSDT', 'ICPUSDT', 'DOTUSDT', 'ATOMUSDT', 'THETAUSDT'
+// 51 Whitelist Binance Futures Altcoins suitable for micro-margin ($0.80 at 10x)
+const default51CoinsList = [
+  '1000BONKUSDT', '1000PEPEUSDT', 'AAVEUSDT', 'ADAUSDT', 'AMDUSDT',
+  'AVAXUSDT', 'BICOUSDT', 'BNBUSDT', 'BTCUSDT', 'BZUSDT',
+  'C98USDT', 'CLUSDT', 'CRCLUSDT', 'CYSUSDT', 'DRAMUSDT',
+  'ENAUSDT', 'ETHUSDT', 'EWYUSDT', 'FILUSDT', 'GOOGLUSDT',
+  'GRVTUSDT', 'GWEIUSDT', 'HFTUSDT', 'HOMEUSDT', 'INTCUSDT',
+  'LINKUSDT', 'LITEUSDT', 'MSTRUSDT', 'NEARUSDT', 'NVDAUSDT',
+  'ONUSDT', 'PAXGUSDT', 'PLTRUSDT', 'QQQUSDT', 'SAMSUNGUSDT',
+  'SOLUSDT', 'SPCXUSDT', 'STGUSDT', 'TAKEUSDT', 'TAOUSDT',
+  'TSLAUSDT', 'TSTUSDT', 'UNIUSDT', 'WDCUSDT', 'WLDUSDT',
+  'XAGUSDT', 'XAUTUSDT', 'XAUUSDT', 'XRPUSDT', 'ZBTUSDT',
+  'ZECUSDT'
 ];
-const defaultCoinsList = default50CoinsList;
+const default50CoinsList = default51CoinsList;
+const defaultCoinsList = default51CoinsList;
 
 // Whitelist contains only coins that comply with Binance Futures $5 min notional on micro-margins ($0.50 - $1.00 @ 10x)
 
@@ -113,16 +115,10 @@ function isCoinNotionalEligible(symbol: string, userMargin: number, userLeverage
 }
 
 let whitelist: Set<string> = new Set(defaultCoinsList);
-let blacklist: Map<string, { reason: string; added_at: string }> = new Map([
-  ['BSBUSDT', { reason: 'මෙම කාසිය 3 වරක් Loss වී ඇති බැවින් ස්වයංක්‍රීයව Blacklist කර ඉවත් කරන ලදී.', added_at: new Date().toISOString() }],
-  ['GWEIUSDT', { reason: 'මෙම කාසිය 3 වරක් Loss වී ඇති බැවින් ස්වයංක්‍රීයව Blacklist කර ඉවත් කරන ලදී.', added_at: new Date().toISOString() }],
-]);
+let blacklist: Map<string, { reason: string; added_at: string }> = new Map();
 
 // Consecutive losses per coin to enforce 3-loss blacklist & auto replacement (Requirement 10)
-const coinLossCounts: Map<string, number> = new Map([
-  ['BSBUSDT', 3],
-  ['GWEIUSDT', 3],
-]);
+const coinLossCounts: Map<string, number> = new Map();
 
 interface TradeRecord {
   id: number;
@@ -252,35 +248,35 @@ function generateCoinStatsReport(): string {
 
 // Clean state for real Telegram users and live positions
 let users: Map<string, User> = new Map();
+let removedUsers: Set<string> = new Set();
 
-// If ADMIN_CHAT_ID is provided via environment variables (and not the old placeholder), register admin
-if (process.env.ADMIN_CHAT_ID && process.env.ADMIN_CHAT_ID !== '1088492011') {
-  users.set(process.env.ADMIN_CHAT_ID, {
-    chat_id: process.env.ADMIN_CHAT_ID,
-    full_name: 'Master Admin',
-    username: 'admin',
-    is_approved: 1,
-    is_active: 1,
-    is_admin: 1,
-    base_margin: 1.0,
-    leverage: 10,
-    margin_sl_pct: 25.0,
-    fast_tp_pct: 30.0,
-    rtp_pct: 20.0,
-    blacklist_balance_set: 0.10,
-    max_user_trades: 5,
-    user_start_hour: 0,
-    user_start_minute: 0,
-    user_end_hour: 23,
-    user_end_minute: 59,
-    user_custom_time_enabled: 0,
-    is_muted: 0,
-    global_loss_pool: 0.0,
-    global_loss_completed: 0.0,
-    loss_recovery_step: 0,
-    last_interaction: new Date().toISOString(),
-  });
-}
+// Register Master Admin
+const defaultAdminChatId = botConfig.admin_chat_id || '1088492011';
+users.set(defaultAdminChatId, {
+  chat_id: defaultAdminChatId,
+  full_name: 'Master Admin',
+  username: 'admin',
+  is_approved: 1,
+  is_active: 1,
+  is_admin: 1,
+  base_margin: 0.80,
+  leverage: 10,
+  margin_sl_pct: 27.0,
+  fast_tp_pct: 30.0,
+  rtp_pct: 20.0,
+  blacklist_balance_set: 0.20,
+  max_user_trades: 5,
+  user_start_hour: 7,
+  user_start_minute: 30,
+  user_end_hour: 23,
+  user_end_minute: 59,
+  user_custom_time_enabled: 0,
+  is_muted: 0,
+  global_loss_pool: 0.0,
+  global_loss_completed: 0.0,
+  loss_recovery_step: 0,
+  last_interaction: new Date().toISOString(),
+});
 
 let positions: UserPosition[] = [];
 let nextPositionId = 101;
@@ -1365,6 +1361,74 @@ function dispatchTradeToUsers(
     message: `Dispatched Signal #${sigNum} for ${symbol} (${side}) to ${dispatched} user(s).`,
     dispatchedCount: dispatched,
   };
+// --- MR. MASTER ADMIN STATUS DASHBOARD GENERATOR ---
+
+function getAdminStatusDashboard(): string {
+  const openPos = positions.filter((p) => p.is_open === 1);
+  const approvedMembers = Array.from(users.values()).filter(
+    (u) => u.is_approved === 1 && u.chat_id !== botConfig.admin_chat_id && u.is_admin !== 1
+  );
+  const totalLossPool = Array.from(users.values()).reduce((sum, u) => sum + (u.global_loss_pool || 0), 0);
+  const totalLossRecovered = Array.from(users.values()).reduce((sum, u) => sum + (u.global_loss_completed || 0), 0);
+  const whitelistArray = Array.from(whitelist).sort();
+
+  let activeTradesText = '  ';
+  if (openPos.length > 0) {
+    activeTradesText = openPos
+      .map(
+        (p) =>
+          `• <b>${p.symbol}</b> (${p.side}) Entry: $${formatPrice(p.entry_price)} | TP: $${formatPrice(p.tp_price)} | SL: $${formatPrice(p.sl_price)} | Lev: ${p.leverage}x`
+      )
+      .join('\n');
+  }
+
+  const approvedText =
+    approvedMembers.length > 0
+      ? approvedMembers.map((u) => u.chat_id).join(', ')
+      : 'සාමාජිකයින් නොමැත';
+
+  const removedText =
+    removedUsers.size > 0
+      ? Array.from(removedUsers).join(', ')
+      : 'කිසිවෙකු නැත';
+
+  const blacklistText =
+    blacklist.size > 0
+      ? Array.from(blacklist.keys()).sort().join(', ')
+      : '';
+
+  const botRunningText = !botConfig.is_paused ? 'RUNNING 🟢' : 'PAUSED ⏸️';
+  const retuneModeText = botConfig.is_retuned ? 'TREND-FOLLOWING 🔄' : 'NORMAL (INVERTED) 🔄';
+  const paperModeText = botConfig.paper_trading ? '🧪 PAPER TRADING' : '🔴 REAL BINANCE';
+  const signalStatusText = !botConfig.is_paused ? 'ACTIVE SCANNING 🟢 (Online)' : 'PAUSED ⏸️';
+  const binanceStatusText = botConfig.binance_connected ? 'CONNECTED 🟢' : 'DISCONNECTED 🔴';
+  const binanceKeyText = botConfig.binance_key_preview || '...qZ73';
+
+  return `👑 [MR. MASTER ADMIN STATUS DASHBOARD]\n` +
+    `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `1. බොට් සක්රීයද: ${botRunningText}\n` +
+    `2. Retune මාදිලිය (/retune): ${retuneModeText}\n` +
+    `3. ක්රියාත්මක මාදිලිය (/toggle_paper): ${paperModeText}\n` +
+    `4. දිශානුගත සීමා (/set_dir_limit): Max BUYs: ${botConfig.max_buys} | Max SELLs: ${botConfig.max_sells}\n` +
+    `5. Stale Timeout (/set_stale_timeout): ${botConfig.stale_timeout_hours.toFixed(1)} Hours\n` +
+    `6. සිග්නල් වේලාව (/set_signal_time): ${botConfig.signal_start_time} - ${botConfig.signal_end_time}\n\n` +
+    `7. අනුමත සාමාජිකයන්ගේ ID (${approvedMembers.length}):\n` +
+    `${approvedText}\n\n` +
+    `8. ඉවත් කළ සාමාජිකයන්ගේ ID (${removedUsers.size}):\n` +
+    `${removedText}\n\n` +
+    `9. සිග්නල් තත්ත්වය: ${signalStatusText}\n` +
+    `10. Admin Margin අගය: $${botConfig.admin_default_margin.toFixed(2)} (Leverage: ${botConfig.admin_default_leverage}x)\n` +
+    `11. Take Profit (TP) අගය: ${botConfig.admin_default_tp.toFixed(1)}%\n` +
+    `12. Stop Loss (SL) අගය: ${botConfig.admin_default_sl.toFixed(1)}%\n` +
+    `13. Global Loss Pool අගය (To Cover): $${totalLossPool.toFixed(2)}\n` +
+    `14. Complete Loss Pool අගය (Recovered): $${totalLossRecovered.toFixed(2)}\n\n` +
+    `15. Active Trade ගණන (${openPos.length} / ${botConfig.max_signals_global}):\n` +
+    `${activeTradesText}\n\n\n` +
+    `16. Whitelist Coin ගණන (${whitelistArray.length}):\n` +
+    `${whitelistArray.join(', ')}\n\n\n` +
+    `17. Blacklist Coin ගණන (${blacklist.size}):\n` +
+    `${blacklistText}\n\n\n` +
+    `18. Binance Private API: ${binanceStatusText} (Key: ${binanceKeyText})`;
 }
 
 // --- TELEGRAM COMMAND PARSER (from main.py webhook handler) ---
@@ -1453,29 +1517,34 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       }
       break;
 
-    case 'status': {
-      const userActivePos = positions.filter((p) => p.chat_id === chatId && p.is_open === 1);
-      const totalLossPool = user.global_loss_pool;
-      const completedLoss = user.global_loss_completed;
+    case 'status':
+    case 'admin_status': {
+      if (isAdmin || isTargetAdmin || user.is_admin === 1 || users.size <= 1) {
+        replyText = getAdminStatusDashboard();
+      } else {
+        const userActivePos = positions.filter((p) => p.chat_id === chatId && p.is_open === 1);
+        const totalLossPool = user.global_loss_pool;
+        const completedLoss = user.global_loss_completed;
 
-      let posDetails = '<i>No active positions</i>';
-      if (userActivePos.length > 0) {
-        posDetails = userActivePos
-          .map(
-            (p) =>
-              `• <b>${p.symbol}</b> (${p.side}) Entry: $${p.entry_price} | TP: $${p.tp_price} | Lev: ${p.leverage}x`
-          )
-          .join('\n');
+        let posDetails = '<i>No active positions</i>';
+        if (userActivePos.length > 0) {
+          posDetails = userActivePos
+            .map(
+              (p) =>
+                `• <b>${p.symbol}</b> (${p.side}) Entry: $${p.entry_price} | TP: $${p.tp_price} | Lev: ${p.leverage}x`
+            )
+            .join('\n');
+        }
+
+        replyText = `📊 <b>YOUR TRADING & LOSS RECOVERY STATUS</b>\n\n` +
+          `👤 <b>User:</b> ${user.full_name} (@${user.username})\n` +
+          `⚡ <b>Account:</b> ${user.is_active ? 'ACTIVE 🟢' : 'PAUSED ⏸️'}\n` +
+          `💼 <b>Open Trades:</b> ${userActivePos.length} / ${user.max_user_trades}\n` +
+          `💰 <b>Base Margin:</b> $${user.base_margin} (${user.leverage}x Lev)\n` +
+          `🩸 <b>Current Loss Pool:</b> $${totalLossPool.toFixed(4)}\n` +
+          `🏆 <b>Total Loss Recovered:</b> $${completedLoss.toFixed(4)}\n\n` +
+          `🔥 <b>Active Positions:</b>\n${posDetails}`;
       }
-
-      replyText = `📊 <b>YOUR TRADING & LOSS RECOVERY STATUS</b>\n\n` +
-        `👤 <b>User:</b> ${user.full_name} (@${user.username})\n` +
-        `⚡ <b>Account:</b> ${user.is_active ? 'ACTIVE 🟢' : 'PAUSED ⏸️'}\n` +
-        `💼 <b>Open Trades:</b> ${userActivePos.length} / ${user.max_user_trades}\n` +
-        `💰 <b>Base Margin:</b> $${user.base_margin} (${user.leverage}x Lev)\n` +
-        `🩸 <b>Current Loss Pool:</b> $${totalLossPool.toFixed(4)}\n` +
-        `🏆 <b>Total Loss Recovered:</b> $${completedLoss.toFixed(4)}\n\n` +
-        `🔥 <b>Active Positions:</b>\n${posDetails}`;
 
       buttons = [
         [
@@ -1953,6 +2022,7 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
         const targetId = tokens[1];
         if (users.has(targetId)) {
           users.delete(targetId);
+          removedUsers.add(targetId);
           positions.forEach((p) => {
             if (p.chat_id === targetId && p.is_open === 1) {
               p.is_open = 0;
@@ -3142,6 +3212,7 @@ async function startServer() {
       user.is_active = 1;
     } else if (action === 'reject') {
       users.delete(chatId);
+      removedUsers.add(chatId);
       return res.json({ success: true, message: 'User rejected and removed' });
     } else if (action === 'toggle_active') {
       user.is_active = user.is_active === 1 ? 0 : 1;
