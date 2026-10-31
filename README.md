@@ -72,6 +72,8 @@
 • `/set_dir_limit [BUYS] [SELLS]` : දිශානුගත සීමා පනවයි (උදා: `/set_dir_limit 4 4`).
 • `/set_stale_timeout [HOURS]` : හිරවූ ට්රේඩ් ඉවත් කිරීමේ කාලය. (Duration)
 • `/set_signal_time [START] [END]` : ක්රියාත්මක වේලාව.
+• `/reset_signal` : Signal Counter එක 0 ලෙස Reset කර මීළඟ signal එක #01 සිට අරඹයි.
+• `/set_signal_num [NUM]` : Signal Counter එක කැමති අංකයකට සකසයි (උදා: `/set_signal_num 0`).
 
 ## 5. කණ්ඩායම් කළමනාකරණය (Team Management):
 • `/users` : සියලු සාමාජිකයින්ගේ කෙටි ලැයිස්තුව.

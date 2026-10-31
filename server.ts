@@ -18,7 +18,7 @@ const initialBotConfig: BotConfig = {
   max_buys: 4,
   max_sells: 4,
   max_signals_global: 10,
-  signal_count: 142,
+  signal_count: 0,
   signal_cooldown_mins: 10,
   btc_dump_filter: true,
   stale_timeout_hours: 72.0,
@@ -1321,9 +1321,10 @@ function dispatchTradeToUsers(
     const slStr = formatPrice(initialSl);
     const copyBlock = `${symbol} TP: ${targetTpStr} SL: ${slStr}`;
     const modeTag = botConfig.paper_trading ? '📝 PAPER' : '⚡ LIVE';
+    const sigStr = sigNum < 10 ? `0${sigNum}` : String(sigNum);
 
     const alertText = 
-      `🔔 <b>NEW TRADING SIGNAL #${sigNum} 🚨 [${modeTag}]</b>\n\n` +
+      `🔔 <b>NEW TRADING SIGNAL #${sigStr} 🚨 [${modeTag}]</b>\n\n` +
       `📍 Coin: <code>${symbol}</code> | Direction: <b>${side}</b>\n` +
       `💵 Margin: $${margin.toFixed(2)} | Leverage: ${leverage}x\n` +
       `🎯 Target TP: <code>${targetTpStr}</code>\n` +
@@ -1985,6 +1986,37 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
         botConfig.signal_start_time = tokens[1];
         botConfig.signal_end_time = tokens[2];
         replyText = `🕒 <b>Signal ක්‍රියාත්මක වේලාව සාර්ථකව සකසන ලදී!</b>\nක්‍රියාත්මක කාලය: <b>${tokens[1]} සිට ${tokens[2]} දක්වා</b>`;
+      }
+      break;
+    }
+
+    case 'reset_signal':
+    case 'reset_signal_count': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else {
+        botConfig.signal_count = 0;
+        replyText = '🔄 <b>Signal Counter සාර්ථකව Reset කරන ලදී!</b>\nමීළඟට නිකුත් වන signal එක <b>Signal #01</b> ලෙස ආරම්භ වේ.';
+      }
+      break;
+    }
+
+    case 'set_signal_num':
+    case 'set_signal_count': {
+      if (!isAdmin) {
+        replyText = '❌ <b>Admin Only!</b>';
+      } else if (tokens.length < 2) {
+        replyText = `🔢 වත්මන් Signal Count: #${botConfig.signal_count}\nUsage: <code>/set_signal_num &lt;number&gt;</code> (උදා: /set_signal_num 0)`;
+      } else {
+        const num = parseInt(tokens[1], 10);
+        if (isNaN(num) || num < 0) {
+          replyText = '❌ වලංගු අංකයක් ලබාදෙන්න (උදා: /set_signal_num 0).';
+        } else {
+          botConfig.signal_count = num;
+          const nextSig = num + 1;
+          const nextSigStr = nextSig < 10 ? '0' + nextSig : String(nextSig);
+          replyText = `🔢 <b>Signal Counter අංකය #${num} ලෙස සකසන ලදී!</b>\nමීළඟ Signal අංකය: <b>Signal #${nextSigStr}</b>`;
+        }
       }
       break;
     }
