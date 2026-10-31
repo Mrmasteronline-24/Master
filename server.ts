@@ -1361,6 +1361,8 @@ function dispatchTradeToUsers(
     message: `Dispatched Signal #${sigNum} for ${symbol} (${side}) to ${dispatched} user(s).`,
     dispatchedCount: dispatched,
   };
+}
+
 // --- MR. MASTER ADMIN STATUS DASHBOARD GENERATOR ---
 
 function getAdminStatusDashboard(): string {
@@ -1417,9 +1419,9 @@ function getAdminStatusDashboard(): string {
     `8. ඉවත් කළ සාමාජිකයන්ගේ ID (${removedUsers.size}):\n` +
     `${removedText}\n\n` +
     `9. සිග්නල් තත්ත්වය: ${signalStatusText}\n` +
-    `10. Admin Margin අගය: $${botConfig.admin_default_margin.toFixed(2)} (Leverage: ${botConfig.admin_default_leverage}x)\n` +
-    `11. Take Profit (TP) අගය: ${botConfig.admin_default_tp.toFixed(1)}%\n` +
-    `12. Stop Loss (SL) අගය: ${botConfig.admin_default_sl.toFixed(1)}%\n` +
+    `10. Admin Margin අගය: $${(botConfig.admin_default_margin ?? 0.80).toFixed(2)} (Leverage: ${botConfig.admin_default_leverage ?? 10}x)\n` +
+    `11. Take Profit (TP) අගය: ${(botConfig.admin_default_tp ?? 30.0).toFixed(1)}%\n` +
+    `12. Stop Loss (SL) අගය: ${(botConfig.admin_default_sl ?? 27.0).toFixed(1)}%\n` +
     `13. Global Loss Pool අගය (To Cover): $${totalLossPool.toFixed(2)}\n` +
     `14. Complete Loss Pool අගය (Recovered): $${totalLossRecovered.toFixed(2)}\n\n` +
     `15. Active Trade ගණන (${openPos.length} / ${botConfig.max_signals_global}):\n` +
