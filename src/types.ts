@@ -115,6 +115,11 @@ export interface CoinMarket {
   noCut: boolean; // in chop zone or |score| <= chop band
   trendText: string; // STRONG UP, UP, CHOP ZONE · NO ACTION, etc.
   signalType: 'STRONG_UP' | 'STRONG_DOWN' | 'ALIGNED_UP' | 'ALIGNED_DOWN' | 'NONE';
+  cutLong?: boolean;
+  cutShort?: boolean;
+  sanUp?: boolean;
+  sanDn?: boolean;
+  confirmedBarTime?: number;
   inWhitelist: boolean;
   inBlacklist: boolean;
   blacklistReason?: string;

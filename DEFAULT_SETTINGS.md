@@ -58,3 +58,18 @@ Defult setting
 - **Whitelisted Coins (51)**: 51 pre-configured Binance Futures pairs
 - **Blacklisted Coins (0)**: Empty blacklist
 - **Binance Private API**: Connected (`binance_connected: true`, key preview `...qZ73`)
+
+## 📊 Ichimoku Itto Indicator Parameters (Exact TradingView Pine Script Defaults)
+- **Indicator Engine**: Ichimoku Itto by [Itto-Ryu] (Pine Script v6)
+- **Preset**: Classic (`[9, 26, 52, 26]`)
+- **Tenkan (Conversion Line)**: 9 bars
+- **Kijun (Base Line / The Blade)**: 26 bars
+- **Senkou Span A (raw)**: `(Tenkan + Kijun) / 2`
+- **Senkou Span B (raw)**: 52 bars
+- **Displacement**: 26 bars (TradingView cloud/chikou offset = 25 bars)
+- **Strong Threshold (`iCut`)**: 4 (Strong Up >= +4, Strong Down <= -4)
+- **Chop Score Band (`iNoCutBand`)**: 1 (Chop zone = inside Kumo OR |score| <= 1)
+- **Kijun Slope Lookback (`iSlopeLen`)**: 5 bars
+- **Candle Timeframe**: 5m (5-minute Binance Futures Klines)
+- **Kline History Buffer**: 300 bars
+- **Crossover Confirmation**: `barstate.isconfirmed` (Triggers when score crosses up/down on confirmed bar close or 3/3 Sanyaku Koten/Gyakuten alignment)

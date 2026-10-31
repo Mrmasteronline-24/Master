@@ -32,7 +32,7 @@ const initialBotConfig: BotConfig = {
   telegram_connected: false,
   telegram_bot_username: '',
   auto_approve_users: true,
-  ichimoku_preset: 'Crypto',
+  ichimoku_preset: 'Classic', // Indicator Default: Classic 9/26/52/26
   strong_cut_threshold: 4,
   chop_score_band: 1,
   kijun_slope_len: 5,
@@ -305,7 +305,7 @@ export interface KlineCandle {
 
 const klinesCache = new Map<string, { timestamp: number; candles: KlineCandle[] }>();
 
-async function fetchBinanceKlines(symbol: string, interval = '5m', limit = 150): Promise<KlineCandle[]> {
+async function fetchBinanceKlines(symbol: string, interval = '5m', limit = 300): Promise<KlineCandle[]> {
   const cached = klinesCache.get(symbol);
   const now = Date.now();
   // Cache for 20 seconds to prevent rate-limit while ensuring real-time responsiveness
@@ -355,20 +355,17 @@ function ktPreset(name: 'Classic' | '5-Day Week' | 'Crypto'): [number, number, n
 // Exact Pine Script "Ichimoku Itto by [Itto-Ryu]" Engine powered by real Candlestick Klines
 function calculateIchimokuFromKlines(
   candles: KlineCandle[],
-  preset: 'Classic' | '5-Day Week' | 'Crypto' = 'Crypto',
+  preset: 'Classic' | '5-Day Week' | 'Crypto' = 'Classic',
   strongCutThreshold: number = 4,
   chopScoreBand: number = 1,
   slopeLen: number = 5
 ) {
-  if (!candles || candles.length < 30) {
+  if (!candles || candles.length < 35) {
     return null;
   }
-
   const [tLen, kLen, bLen, disp] = ktPreset(preset);
-  const curIdx = candles.length - 1;
-  const currentPrice = candles[curIdx].close;
 
-  // Donchian midpoint helper: (highest high of len bars + lowest low of len bars) / 2 up to endIdx
+  // Donchian midpoint: math.avg(ta.lowest(low, len), ta.highest(high, len))
   const getDonchian = (endIdx: number, len: number): number => {
     const startIdx = Math.max(0, endIdx - len + 1);
     let maxH = -Infinity;
@@ -380,103 +377,161 @@ function calculateIchimokuFromKlines(
     return (maxH + minL) / 2;
   };
 
-  // 1. Tenkan & Kijun (The Blade) for the current candle bar
-  const tenkan = Number(getDonchian(curIdx, tLen).toFixed(4));
-  const kijun = Number(getDonchian(curIdx, kLen).toFixed(4));
+  const computeBarItto = (idx: number) => {
+    if (idx < 0 || idx >= candles.length) return null;
+    const bar = candles[idx];
+    const price = bar.close;
 
-  // 2. Senkou Span A (raw) & Senkou Span B (raw)
-  const ssaRaw = Number(((tenkan + kijun) / 2).toFixed(4));
-  const ssbRaw = Number(getDonchian(curIdx, bLen).toFixed(4));
+    // 1. Tenkan & Kijun (The Blade)
+    const tenkan = Number(getDonchian(idx, tLen).toFixed(4));
+    const kijun = Number(getDonchian(idx, kLen).toFixed(4));
 
-  // 3. Kumo under current bar (projected displacement disp - 1 bars ago: 29 bars ago in Crypto)
-  const dispOffset = disp - 1;
-  const pastIdx = Math.max(0, curIdx - dispOffset);
+    // 2. Senkou Span A & B raw
+    const ssaRaw = Number(((tenkan + kijun) / 2).toFixed(4));
+    const ssbRaw = Number(getDonchian(idx, bLen).toFixed(4));
 
-  const pastTenkan = getDonchian(pastIdx, tLen);
-  const pastKijun = getDonchian(pastIdx, kLen);
-  const kumoA = Number(((pastTenkan + pastKijun) / 2).toFixed(4));
-  const kumoB = Number(getDonchian(pastIdx, bLen).toFixed(4));
+    // 3. Kumo under current bar (disp - 1 bars ago: TradingView offset = disp - 1)
+    const dispOffset = disp - 1;
+    const pastIdx = Math.max(0, idx - dispOffset);
+    const pastTenkan = getDonchian(pastIdx, tLen);
+    const pastKijun = getDonchian(pastIdx, kLen);
+    const kumoA = Number(((pastTenkan + pastKijun) / 2).toFixed(4));
+    const kumoB = Number(getDonchian(pastIdx, bLen).toFixed(4));
 
-  // 4. Chikou vs the price it is plotted against:
-  // Pine script: kt_chikou(disp) => close > high[disp - 1] ? 1 : close < low[disp - 1] ? -1 : 0
-  const pastBar = candles[pastIdx];
-  const chikou = currentPrice > pastBar.high ? 1 : currentPrice < pastBar.low ? -1 : 0;
+    // 4. Chikou vs the price it is plotted against:
+    // Pine script: kt_chikou(disp) => close > high[disp - 1] ? 1 : close < low[disp - 1] ? -1 : 0
+    const pastBar = candles[pastIdx];
+    const chikou = price > pastBar.high ? 1 : price < pastBar.low ? -1 : 0;
 
-  // 5. inKumo: close inside the cloud
-  const kTop = Math.max(kumoA, kumoB);
-  const kBot = Math.min(kumoA, kumoB);
-  const inKumo = currentPrice <= kTop && currentPrice >= kBot;
+    // 5. In Kumo: close <= math.max(kumoA, kumoB) and close >= math.min(kumoA, kumoB)
+    const kTop = Math.max(kumoA, kumoB);
+    const kBot = Math.min(kumoA, kumoB);
+    const inKumo = price <= kTop && price >= kBot;
 
-  // 6. Five Itto Score Components:
-  // c1: Cloud position (+1 above, -1 below, 0 inside)
-  const c1 = currentPrice > kTop ? 1 : currentPrice < kBot ? -1 : 0;
-  // c2: Tenkan / Kijun cross (+1 Tenkan > Kijun, -1 Tenkan < Kijun)
-  const c2 = tenkan > kijun ? 1 : tenkan < kijun ? -1 : 0;
-  // c3: Chikou position (+1 above, -1 below, 0 inside)
-  const c3 = chikou;
-  // c4: Future Kumo direction (+1 SSA > SSB, -1 SSA < SSB)
-  const c4 = ssaRaw > ssbRaw ? 1 : ssaRaw < ssbRaw ? -1 : 0;
-  // c5: Kijun slope (compare current Kijun with Kijun slopeLen bars ago)
-  const slopeIdx = Math.max(0, curIdx - slopeLen);
-  const kijunSlopePast = getDonchian(slopeIdx, kLen);
-  const c5 = kijun > kijunSlopePast ? 1 : kijun < kijunSlopePast ? -1 : 0;
+    // 6. Five Itto Score Components:
+    const c1 = price > kTop ? 1 : price < kBot ? -1 : 0;
+    const c2 = tenkan > kijun ? 1 : tenkan < kijun ? -1 : 0;
+    const c3 = chikou;
+    const c4 = ssaRaw > ssbRaw ? 1 : ssaRaw < ssbRaw ? -1 : 0;
+    const slopeIdx = Math.max(0, idx - slopeLen);
+    const kijunSlopePast = getDonchian(slopeIdx, kLen);
+    const c5 = kijun > kijunSlopePast ? 1 : kijun < kijunSlopePast ? -1 : 0;
 
-  const score = c1 + c2 + c3 + c4 + c5; // -5 to +5
-  const scorePct = score * 20; // -100% to +100%
+    const score = c1 + c2 + c3 + c4 + c5;
+    const scorePct = score * 20;
 
-  // Sanyaku 3/3 Aligned (Sanyaku Koten / Gyakuten)
-  const sanyaku = (c1 === 1 && c2 === 1 && c3 === 1) ? 1 : (c1 === -1 && c2 === -1 && c3 === -1) ? -1 : 0;
+    // 三役: +1 = Sanyaku Koten (all three +1), -1 = Sanyaku Gyakuten, 0 = neither.
+    const sanyaku = (c1 === 1 && c2 === 1 && c3 === 1) ? 1 : (c1 === -1 && c2 === -1 && c3 === -1) ? -1 : 0;
 
-  // Chop zone: in Kumo OR |score| <= chopScoreBand
-  const noCut = inKumo || Math.abs(score) <= chopScoreBand;
+    // Chop zone: in Kumo OR |score| <= chopScoreBand
+    const noCut = inKumo || Math.abs(score) <= chopScoreBand;
 
-  // Signals
+    return {
+      price,
+      tenkan,
+      kijun,
+      ssaRaw,
+      ssbRaw,
+      kumoA,
+      kumoB,
+      chikou,
+      kTop,
+      kBot,
+      inKumo,
+      score,
+      scorePct,
+      sanyaku,
+      noCut,
+    };
+  };
+
+  const curIdx = candles.length - 1;
+  const currentBar = computeBarItto(curIdx);
+  if (!currentBar) return null;
+
+  // TradingView Confirmed Bar:
+  // candles[curIdx] is the current in-progress candle.
+  // candles[curIdx - 1] is the confirmed closed candle (barstate.isconfirmed).
+  // candles[curIdx - 2] is the bar prior to the confirmed closed candle (score[1]).
+  const confirmedIdx = Math.max(0, curIdx - 1);
+  const prevIdx = Math.max(0, confirmedIdx - 1);
+
+  const confirmedBar = computeBarItto(confirmedIdx) || currentBar;
+  const prevBar = computeBarItto(prevIdx) || confirmedBar;
+
+  // Exact Pine Script Crossover Conditions:
+  // bool cutLong = barstate.isconfirmed and hasPrev and not noCut and score >= iCut and score[1] < iCut
+  // bool cutShort = barstate.isconfirmed and hasPrev and not noCut and score <= -iCut and score[1] > -iCut
+  // bool sanUp = barstate.isconfirmed and sanyaku == 1 and sanyaku[1] != 1
+  // bool sanDn = barstate.isconfirmed and sanyaku == -1 and sanyaku[1] != -1
+  const cutLongConfirmed = !confirmedBar.noCut && confirmedBar.score >= strongCutThreshold && prevBar.score < strongCutThreshold;
+  const cutShortConfirmed = !confirmedBar.noCut && confirmedBar.score <= -strongCutThreshold && prevBar.score > -strongCutThreshold;
+  const sanUpConfirmed = confirmedBar.sanyaku === 1 && prevBar.sanyaku !== 1;
+  const sanDnConfirmed = confirmedBar.sanyaku === -1 && prevBar.sanyaku !== -1;
+
+  // Live in-progress candle crossover check as well
+  const cutLongLive = !currentBar.noCut && currentBar.score >= strongCutThreshold && confirmedBar.score < strongCutThreshold;
+  const cutShortLive = !currentBar.noCut && currentBar.score <= -strongCutThreshold && confirmedBar.score > -strongCutThreshold;
+  const sanUpLive = currentBar.sanyaku === 1 && confirmedBar.sanyaku !== 1;
+  const sanDnLive = currentBar.sanyaku === -1 && confirmedBar.sanyaku !== -1;
+
+  const cutLong = cutLongConfirmed || cutLongLive;
+  const cutShort = cutShortConfirmed || cutShortLive;
+  const sanUp = sanUpConfirmed || sanUpLive;
+  const sanDn = sanDnConfirmed || sanDnLive;
+
   let signalType: 'STRONG_UP' | 'STRONG_DOWN' | 'ALIGNED_UP' | 'ALIGNED_DOWN' | 'NONE' = 'NONE';
-  if (!noCut && score >= strongCutThreshold) {
+  if (cutLong) {
     signalType = 'STRONG_UP';
-  } else if (!noCut && score <= -strongCutThreshold) {
+  } else if (cutShort) {
     signalType = 'STRONG_DOWN';
-  } else if (sanyaku === 1) {
+  } else if (sanUp) {
     signalType = 'ALIGNED_UP';
-  } else if (sanyaku === -1) {
+  } else if (sanDn) {
     signalType = 'ALIGNED_DOWN';
   }
 
-  // Trend status text matching Pine Script
+  // Trend status text matching Pine Script f_trend:
   let trendText = 'SIDEWAYS';
-  if (noCut) {
+  if (currentBar.noCut) {
     trendText = 'CHOP ZONE · NO ACTION';
-  } else if (score >= strongCutThreshold) {
+  } else if (currentBar.score >= strongCutThreshold) {
     trendText = 'STRONG UP';
-  } else if (score >= 3) {
+  } else if (currentBar.score >= 3) {
     trendText = 'UP';
-  } else if (score > 0) {
+  } else if (currentBar.score > 0) {
     trendText = 'SIDEWAYS UP';
-  } else if (score <= -strongCutThreshold) {
+  } else if (currentBar.score <= -strongCutThreshold) {
     trendText = 'STRONG DOWN';
-  } else if (score <= -3) {
+  } else if (currentBar.score <= -3) {
     trendText = 'DOWN';
-  } else if (score < 0) {
+  } else if (currentBar.score < 0) {
     trendText = 'SIDEWAYS DOWN';
   }
 
   return {
-    tenkan,
-    kijun,
-    ssaRaw,
-    ssbRaw,
-    kumoA,
-    kumoB,
-    chikou,
-    score,
-    scorePct,
-    sanyaku,
-    inKumo,
-    noCut,
+    price: currentBar.price,
+    tenkan: currentBar.tenkan,
+    kijun: currentBar.kijun,
+    ssaRaw: currentBar.ssaRaw,
+    ssbRaw: currentBar.ssbRaw,
+    kumoA: currentBar.kumoA,
+    kumoB: currentBar.kumoB,
+    chikou: currentBar.chikou,
+    score: currentBar.score,
+    scorePct: currentBar.scorePct,
+    sanyaku: currentBar.sanyaku,
+    inKumo: currentBar.inKumo,
+    noCut: currentBar.noCut,
     trendText,
     signalType,
-    magnetKijun: kijun,
-    magnetSpanB: ssbRaw,
+    cutLong,
+    cutShort,
+    sanUp,
+    sanDn,
+    confirmedBarTime: candles[confirmedIdx].openTime,
+    magnetKijun: currentBar.kijun,
+    magnetSpanB: currentBar.ssbRaw,
   };
 }
 
@@ -486,7 +541,7 @@ function calculateIchimokuItto(
   high24h: number,
   low24h: number,
   change24h: number,
-  preset: 'Classic' | '5-Day Week' | 'Crypto' = 'Crypto',
+  preset: 'Classic' | '5-Day Week' | 'Crypto' = 'Classic',
   strongCutThreshold: number = 4,
   chopScoreBand: number = 1,
   slopeLen: number = 5
@@ -577,7 +632,7 @@ async function syncWhitelist5mKlines(): Promise<void> {
   for (const sym of symbols) {
     if (blacklist.has(sym)) continue;
     try {
-      const candles = await fetchBinanceKlines(sym, '5m', 150);
+      const candles = await fetchBinanceKlines(sym, '5m', 300);
       if (candles && candles.length >= 30) {
         const curCandle = candles[candles.length - 1];
         const price = curCandle.close;
@@ -619,6 +674,11 @@ async function syncWhitelist5mKlines(): Promise<void> {
             noCut: ichi.noCut,
             trendText: ichi.trendText,
             signalType: ichi.signalType,
+            cutLong: ichi.cutLong,
+            cutShort: ichi.cutShort,
+            sanUp: ichi.sanUp,
+            sanDn: ichi.sanDn,
+            confirmedBarTime: ichi.confirmedBarTime,
             magnetKijun: ichi.magnetKijun,
             magnetSpanB: ichi.magnetSpanB,
             inWhitelist: true,
@@ -3043,12 +3103,18 @@ function scanIchimokuSignals() {
     const btcCoin = marketCache.get('BTCUSDT');
     const isBtcDumping = botConfig.btc_dump_filter && btcCoin ? btcCoin.change24h < -4.0 : false;
 
-    if (coin.signalType === 'STRONG_UP' || (coin.sanyaku === 1 && coin.score >= 3)) {
+    // Exact Pine Script Trigger:
+    // BUY on cutLong (Strong Up crossover) OR sanUp (3/3 Aligned Up)
+    // SELL on cutShort (Strong Down crossover) OR sanDn (3/3 Aligned Down)
+    const isBuyTrigger = Boolean(coin.cutLong || coin.sanUp || (coin.signalType === 'STRONG_UP' && !coin.noCut));
+    const isSellTrigger = Boolean(coin.cutShort || coin.sanDn || (coin.signalType === 'STRONG_DOWN' && !coin.noCut));
+
+    if (isBuyTrigger) {
       if (!isBtcDumping) {
         dispatchTradeToUsers(sym, 'BUY', coin.price);
         break; // Dispatch one signal per scan tick to keep portfolio balanced
       }
-    } else if (coin.signalType === 'STRONG_DOWN' || (coin.sanyaku === -1 && coin.score <= -3)) {
+    } else if (isSellTrigger) {
       dispatchTradeToUsers(sym, 'SELL', coin.price);
       break;
     }
