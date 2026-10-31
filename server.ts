@@ -1204,7 +1204,7 @@ function dispatchTradeToUsers(
     return { success: false, message: `Global max trades reached (${openPositions.length}/${botConfig.max_signals_global}).`, dispatchedCount: 0 };
   }
 
-  const activeUsers = Array.from(users.values()).filter((u) => u.is_approved === 1 && u.is_active === 1);
+  const activeUsers = Array.from(users.values()).filter((u) => u.is_approved === 1 && u.is_active === 1 && u.is_waiting_mode !== 1);
   if (activeUsers.length === 0) {
     return {
       success: false,
@@ -1219,7 +1219,8 @@ function dispatchTradeToUsers(
   const tradeDuration = durationMins || botConfig.default_trade_duration_mins || 60;
 
   for (const [, u] of users.entries()) {
-    if (u.is_approved !== 1 || u.is_active !== 1) continue;
+    // Skip dispatching new signals to users in wait mode (other members receive normally)
+    if (u.is_approved !== 1 || u.is_active !== 1 || u.is_waiting_mode === 1) continue;
 
     // Check user concurrency limit
     const userOpens = openPositions.filter((p) => p.chat_id === u.chat_id);
@@ -1306,7 +1307,7 @@ function dispatchTradeToUsers(
       be_alert_sent: false,
       duration_mins: tradeDuration,
       timeout_alert_sent: false,
-      is_wait_mode_trade: u.is_waiting_mode === 1,
+      is_wait_mode_trade: false,
     };
 
     positions.unshift(newPos);
@@ -1629,8 +1630,9 @@ function handleTelegramCommand(chatId: string, username: string, fullName: strin
       });
       replyText = `⏸️ <b>WAIT MODE සක්‍රීය කරන ලදී (/wait_on)! 🟡</b>\n\n` +
         `• <b>තත්වය:</b> WAIT / BUSY MODE ACTIVE 🔕\n` +
-        `• ඔබට සිග්නල් බැලීමට හෝ Trade කිරීමට නොහැකි බැවින් <b>Reminder Alerts අක්‍රිය කර ඇත.</b>\n` +
-        `• මෙම කාලය තුළ පැමිණෙන සිග්නල් Loss වුවහොත්, එම Loss අගය සාමාන්‍ය Pool එකට එකතු නොවී <b>වෙනම Wait Loss Pool එකක් ලෙස</b> ගණනය වේ.\n` +
+        `• <b>ඔබගේ Telegram ගිණුමට නව සිග්නල් පැමිණීම තාවකාලිකව නවතා ඇති අතර Reminder Alerts ද අක්‍රිය කර ඇත.</b>\n` +
+        `• <i>සටහන: අනෙකුත් සාමාජිකයින්ට (Members) සුපුරුදු පරිදි සාමාන්‍ය ලෙස නව සිග්නල් ලැබෙනු ඇත.</i>\n` +
+        `• දැනට Open වී (Run වෙමින්) පවතින සිග්නල් Loss වුවහොත්, එම Loss අගය සාමාන්‍ය Pool එකට එකතු නොවී <b>වෙනම Wait Loss Pool එකක් ලෙස</b> ගණනය වේ.\n` +
         `• <b>වෙන්වූ Wait Loss Pool අගය:</b> $${(user.wait_loss_pool || 0).toFixed(4)}\n\n` +
         `<i>නැවත සාමාන්‍ය තත්වයට හැරවීමට <b>/wait_off</b> භාවිතා කරන්න.</i>`;
       buttons = [
@@ -2932,7 +2934,7 @@ function closePosition(positionId: number, reason: 'TP_HIT' | 'SL_HIT' | 'MANUAL
     const lossAmount = pos.margin * (user.margin_sl_pct / 100.0);
     const totalTradeLoss = lossAmount + pos.attached_loss;
 
-    const isWaitTrade = Boolean(pos.is_wait_mode_trade || user.is_waiting_mode === 1);
+    const isWaitTrade = Boolean(pos.is_wait_mode_trade);
     if (isWaitTrade) {
       // සිග්නල් බැලීමට හා trade දැමීමට නොහැකි වන අවස්ථාවක පැමිණෙන සිග්නල් loss වුනොත් එහි loss අගය වෙනම count වේ
       user.wait_loss_pool = Number(((user.wait_loss_pool || 0) + totalTradeLoss).toFixed(4));
